@@ -11,11 +11,17 @@ TabSplit is a program that simulates a cash-flow minimizer between a group of pe
 
 <!-- How to use TabSplit -->
 ## How do I use TabSplit?
-As per any other Data Structures project, you will first want to download and open this project onto VSCode, via thhe Github Desktop application. Once you do so, run the code.
+You need Java 17 or newer. From the project folder, run:
+
+```bash
+./gradlew run
+```
+
+Run the tests with `./gradlew test`.
+
 Once the program begins running, you should be met with this homescreen
 
-![image](<img width="600" alt="TabSplit_Homescreen" src="https://github.com/user-attachments/assets/468d9b6a-b90e-4049-9077-75628c794b79" />
-)
+<img width="600" alt="TabSplit_Homescreen" src="https://github.com/user-attachments/assets/468d9b6a-b90e-4049-9077-75628c794b79" />
 
 The buttons and their functions go as followed:
 * "Friends" a separate tab in which the user can add and view their friends.
@@ -25,24 +31,20 @@ The buttons and their functions go as followed:
 ## Friends
 When clicking on the "Friends" button you should be met with this screen. The "back" button will take you back to the homescreen.
 
-![image](<img width="600" alt="TabSplit_Friends1" src="https://github.com/user-attachments/assets/ade8b8d5-7d7a-41df-869e-8a594292456c" />
-)
+<img width="600" alt="TabSplit_Friends1" src="https://github.com/user-attachments/assets/ade8b8d5-7d7a-41df-869e-8a594292456c" />
 
 The leftmost textfield is the name of the friend you wish to add. The "Add to group" button adds them to a user graph, which will be referenced across the entire program. The text in the middle will display the users currently in the group.
 
-![image](<img width="600" alt="TabSplit_Friends2" src="https://github.com/user-attachments/assets/4cd74a75-b2eb-48bb-829a-4231730d0ad4" />
-)
+<img width="600" alt="TabSplit_Friends2" src="https://github.com/user-attachments/assets/4cd74a75-b2eb-48bb-829a-4231730d0ad4" />
 
 ## Expenses
 When clicking on the "Expenses" button you should be met with this screen. The "back" button will take you back to the homescreen.
 
-![image](<img width="601" alt="TabSplit_Expenses1" src="https://github.com/user-attachments/assets/7ff0fe18-12e1-4c6a-a959-d6d990ba8fa0" />
-)
+<img width="601" alt="TabSplit_Expenses1" src="https://github.com/user-attachments/assets/7ff0fe18-12e1-4c6a-a959-d6d990ba8fa0" />
 
 The "Person paying" textfield refers to the name of the friend who is the own who paid initially on behalf of another person, meaning that they will be owed money. The "Person owing" textfield refers to the name of the friend who was paid on behald by another person, meaning that they will be owing the other person money. The "Value" textfield refers to the amount that is being owed (must be numbers inputted in this textfield, letters will not work). The "Add Transaction" button will calculate the lowest amount of transaction performed using the cash flow minimizer algorith; the results will be displayed below.
 
-![inmage](<img width="600" alt="TabSplit_Expenses2" src="https://github.com/user-attachments/assets/689bc6df-73a9-4a45-bcb3-7248fe7feaad" />
-)
+<img width="600" alt="TabSplit_Expenses2" src="https://github.com/user-attachments/assets/689bc6df-73a9-4a45-bcb3-7248fe7feaad" />
 
 <!-- Bugs -->
 ## Bugs

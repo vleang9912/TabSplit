@@ -1,5 +1,4 @@
 import java.awt.*;
-import java.util.List;
 
 import javax.swing.*;
 
@@ -9,10 +8,10 @@ import javax.swing.*;
  */
 public class FriendsTab extends ParentTab {
     private JTextField newUserField;
-    public List<String> users;
     public UserGraph userGraph;
     private JButton addUserButton;
-    private JLabel text;
+    private JLabel errorLabel, countLabel;
+    private DefaultListModel<String> groupModel = new DefaultListModel<>();
 
     /**
      * Creates a new FriendsTab with functionality to add users and display the user list.
@@ -23,43 +22,76 @@ public class FriendsTab extends ParentTab {
     public FriendsTab(BackButtonHandler onBackButtonClick, UserGraph userGraph) {
         super("Friends", onBackButtonClick);
         this.userGraph = userGraph;
-        content.setLayout(new BorderLayout(0, 40));
+        content.setLayout(new BorderLayout(0, 12));
 
-        // Initialize and set up the input field for adding users
-        newUserField = new JTextField("Add user", 15);
-
-        // Initialize and set up the button for adding users
+        // Input row: "Name: [field] [Add to group]", with errors underneath
+        newUserField = new JTextField(16);
+        newUserField.addActionListener(e -> handleAddUser()); // Enter adds the name
         addUserButton = new JButton("Add to group");
         addUserButton.addActionListener(e -> handleAddUser());
+        errorLabel = errorLabel();
 
-        JPanel inputRow = new JPanel(new FlowLayout(FlowLayout.CENTER, 40, 0));
+        JPanel inputRow = new JPanel(new BorderLayout(8, 0));
         inputRow.setOpaque(false);
-        inputRow.add(newUserField);
-        inputRow.add(addUserButton);
-        content.add(inputRow, BorderLayout.NORTH);
+        inputRow.add(new JLabel("Name:"), BorderLayout.WEST);
+        inputRow.add(newUserField, BorderLayout.CENTER);
+        inputRow.add(addUserButton, BorderLayout.EAST);
 
-        // Initialize and set up the text for displaying the user list
-        text = new JLabel(userGraph.getUserList().toString());
-        text.setVerticalAlignment(SwingConstants.TOP);
-        content.add(text, BorderLayout.CENTER);
+        JPanel form = new JPanel(new BorderLayout(0, 4));
+        form.setOpaque(false);
+        form.add(inputRow, BorderLayout.NORTH);
+        form.add(errorLabel, BorderLayout.SOUTH);
+        content.add(card("Add a friend", form), BorderLayout.NORTH);
+
+        // The group, one person per line
+        countLabel = new JLabel();
+        countLabel.setForeground(MUTED);
+        JPanel groupPanel = new JPanel(new BorderLayout(0, 6));
+        groupPanel.setOpaque(false);
+        groupPanel.add(plainList(groupModel, null), BorderLayout.CENTER);
+        groupPanel.add(countLabel, BorderLayout.SOUTH);
+        content.add(card("Group", groupPanel), BorderLayout.CENTER);
+
+        refreshGroup();
+    }
+
+    @Override
+    public void onShow() {
+        errorLabel.setText(" ");
+        newUserField.requestFocusInWindow();
     }
 
     /**
-     * Handles the action of adding a new user when the "Add to group" button is clicked. This method
-     * validates the input, adds the user to the `UserGraph`, and updates the displayed user list.
-     *
-     * @throws IllegalArgumentException If the input is invalid (e.g., empty or default text).
+     * Handles the action of adding a new user when the "Add to group" button is clicked or Enter is
+     * pressed. Shows a message instead of adding the name if it is empty, already in the group, or
+     * the group is full.
      */
     private void handleAddUser() {
-        // Get input from the text field
         String userName = newUserField.getText();
-
-        if (userName.isEmpty() || userName.equals("Add user")) {
-            throw new IllegalArgumentException("Invalid User Name");
-        } else {
-            // Add the user to the graph and update the display
-            userGraph.addUser(userName);
-            text.setText(userGraph.getUserList().toString());
+        String problem = userGraph.checkNewUser(userName);
+        if (problem != null) {
+            errorLabel.setText(problem);
+            return;
         }
+
+        userGraph.addUser(userName);
+        errorLabel.setText(" ");
+        newUserField.setText("");
+        newUserField.requestFocusInWindow();
+        refreshGroup();
+    }
+
+    /**
+     * Shows the current group in the list, with "Me" shown as "Me (you)".
+     */
+    private void refreshGroup() {
+        groupModel.clear();
+        for (int i = 0; i < userGraph.V(); i++) {
+            groupModel.addElement(i == 0 ? "Me (you)" : userGraph.IntegerStringMap.get(i));
+        }
+        int size = userGraph.V();
+        countLabel.setText(size + " of " + userGraph.getLimit() + " people"
+            + (size >= userGraph.getLimit() ? " — the group is full" : ""));
+        addUserButton.setEnabled(size < userGraph.getLimit());
     }
 }

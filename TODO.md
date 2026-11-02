@@ -8,28 +8,28 @@ Planned improvements after the kilt-graphics → Swing port. The port itself kee
 - [ ] Update the setup/run instructions (no longer needs the course's VSCode/GitHub Desktop setup)
 
 ## UI
-- [ ] Show error messages instead of crashing or silently doing nothing:
+- [x] Show error messages instead of crashing or silently doing nothing:
   - empty or default name on Friends (currently throws `IllegalArgumentException`)
   - duplicate names (currently allowed)
   - more than 10 people (currently crashes later, when adding a transaction)
   - non-number amount on Expenses (currently `NumberFormatException`)
   - zero/negative amount, or same person on both sides
   - a name that isn't in the group (currently nothing happens)
-- [ ] Pick people from dropdowns instead of typing names
-- [ ] Use labels or real placeholder text instead of pre-filled text boxes ("Paid by", "Value", ...)
-- [ ] Keep each screen instead of recreating it on every click, so Expenses keeps its state
-- [ ] Show a history list of transactions, including the description
-- [ ] Show the group as a list instead of `[Me, Harold, ...]`
-- [ ] Show "Everyone is settled up" when there's nothing to pay
-- [ ] Use the system look and feel; tidy up layout and colors
-- [ ] Remove debug output (`System.out.println`, `matrixPrint`)
-- [ ] Add `application` plugin to `build.gradle` so `gradle run` works; add a Gradle wrapper
+- [x] Pick people from dropdowns instead of typing names
+- [x] Use labels or real placeholder text instead of pre-filled text boxes ("Paid by", "Value", ...)
+- [x] Keep each screen instead of recreating it on every click, so Expenses keeps its state
+- [x] Show a history list of transactions, including the description
+- [x] Show the group as a list instead of `[Me, Harold, ...]`
+- [x] Show "Everyone is settled up" when there's nothing to pay
+- [x] Use the system look and feel; tidy up layout and colors
+- [x] Remove debug output (`System.out.println`, `matrixPrint`)
+- [x] Add `application` plugin to `build.gradle` so `gradle run` works; add a Gradle wrapper
 
 ## Calculations
-- [ ] Store money as whole cents (`long`) or `BigDecimal` instead of `double`, so small floating-point
+- [x] Store money as whole cents (`long`) or `BigDecimal` instead of `double`, so small floating-point
       leftovers (e.g. 0.1 + 0.2 - 0.3) can't show up as `$0.00` payments
-- [ ] Clearer variable names in `cashFlowMin()` (`vMax`/`vMin` → `receiver`/`payer`)
-- [ ] Make `cashFlowMin()` find the true minimum number of payments (see below)
+- [x] Clearer variable names in `cashFlowMin()` (`vMax`/`vMin` → `receiver`/`payer`)
+- [x] Make `cashFlowMin()` find the true minimum number of payments (see below)
 - [ ] Consider dropping the `LIMIT x LIMIT` matrix: settling up only needs each person's net balance.
       Keep the matrix only if the app should also show who owes whom directly.
 

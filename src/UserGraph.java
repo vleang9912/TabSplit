@@ -3,20 +3,19 @@ import java.util.*;
 /**
  * A class representing a graph with an adjacency matrix implementation to track financial
  * transactions between users.
+ *
+ * Money is stored as whole cents ({@code long}) so floating-point leftovers such as
+ * 0.1 + 0.2 - 0.3 can never show up as a "$0.00" payment.
  */
 public class UserGraph {
-
-    // need to set the starting limit at five and expand if necessary to 10. Cap it there tho
-    // need to find a way to discern user amount / V is a placeholder for that in getNetAmt
-    // and prob other methods but it's not right
 
     private static final int LIMIT = 10;
 
     private int V;
 
-    // matrix[a][b] is how much person a owes person b. Values are never negative, and at most one
-    // of matrix[a][b] and matrix[b][a] is nonzero.
-    double[][] matrix;
+    // matrix[a][b] is how much person a owes person b, in cents. Values are never negative, and at
+    // most one of matrix[a][b] and matrix[b][a] is nonzero.
+    long[][] matrix = new long[LIMIT][LIMIT];
 
     private List<String> userList = new ArrayList<String>();
 
@@ -24,22 +23,16 @@ public class UserGraph {
     public Map<String, Integer> StringIntegerMap = new TreeMap<>();
 
     /**
+     * One payment needed to settle up: {@code payer} sends {@code cents} to {@code receiver}.
+     */
+    public record Payment(int payer, int receiver, long cents) {}
+
+    /**
      * Constructs a new UserGraph with a fixed matrix size. Initializes the graph with a default user
      * "Me".
      */
     public UserGraph() {
-
-        // initialize the matrix
-        double[][] matrix = new double[LIMIT][LIMIT];
-        for (int i = 0; i < LIMIT; i++) {
-            for (int j = 0; j < LIMIT; j++) {
-                matrix[i][j] = 0;
-            }
-        }
-
-        this.matrix = matrix;
         addUser("Me");
-        matrixPrint(matrix);
     }
 
     /**
@@ -74,26 +67,57 @@ public class UserGraph {
     /**
      * Returns the list of user names in the graph.
      *
-     * @return a list of user names.
+     * @return a copy of the list of user names.
      */
     public List<String> getUserList() {
-        List<String> resList = new ArrayList<>();
-
-        Iterator<String> iter = userList.iterator();
-        while (iter.hasNext()) {
-            resList.add(iter.next());
-        }
-        return resList;
+        return new ArrayList<>(userList);
     }
 
+    /**
+     * Returns the name to show for a user: "You" for the user "Me", otherwise their name.
+     *
+     * @param v the vertex index of the user.
+     * @return the display name.
+     */
+    public String displayName(int v) {
+        return v == 0 ? "You" : IntegerStringMap.get(v);
+    }
+
+    /**
+     * Checks whether a name can be added to the group.
+     *
+     * @param name the name to check.
+     * @return a message explaining why the name can't be added, or {@code null} if it can.
+     */
+    public String checkNewUser(String name) {
+        String trimmed = name == null ? "" : name.trim();
+        if (trimmed.isEmpty()) {
+            return "Enter a name first.";
+        }
+        if (V >= LIMIT) {
+            return "The group is full (" + LIMIT + " people max).";
+        }
+        for (String existing : userList) {
+            if (existing.equalsIgnoreCase(trimmed)) {
+                return existing + " is already in the group.";
+            }
+        }
+        return null;
+    }
 
     /**
      * Adds a user to the graph. Each user is assigned a vertex index, and mappings between user names
-     * and vertex indices are updated.
+     * and vertex indices are updated. Leading and trailing spaces are removed from the name.
      *
      * @param name the name of the user to add.
+     * @throws IllegalArgumentException if the name is empty, already taken, or the group is full.
      */
     public void addUser(String name) {
+        String problem = checkNewUser(name);
+        if (problem != null) {
+            throw new IllegalArgumentException(problem);
+        }
+        name = name.trim();
         userList.add(name);
         IntegerStringMap.put(V, name);
         StringIntegerMap.put(name, V);
@@ -106,34 +130,33 @@ public class UserGraph {
      * @param transac the transaction object containing credit, debit, and value details.
      */
     public void updateEdge(Transaction transac) {
-        validateVertex(transac.vCredit);
-        validateVertex(transac.vDebit);
-
-        double val = transac.val;
-
-        // scenario: vDebit already owed some money beforehand or nobody owed anybody
-
-        if (matrix[transac.vDebit][transac.vCredit] >= 0 && matrix[transac.vCredit][transac.vDebit] == 0) {
-            matrix[transac.vDebit][transac.vCredit] += transac.val;
-
+        int credit = transac.vCredit;
+        int debit = transac.vDebit;
+        validateVertex(credit);
+        validateVertex(debit);
+        if (credit == debit) {
+            return; // paying for yourself doesn't change anyone's balance
         }
 
-        // scenario: vDebit used to lend money to vCredit but now owes money i.e. directed graph switches
-        // directions
-        else if (matrix[transac.vDebit][transac.vCredit] == 0 && matrix[transac.vCredit][transac.vDebit] > 0) {
+        // How much debit owes credit after this transaction. Negative means credit owes debit.
+        long owed = matrix[debit][credit] - matrix[credit][debit] + transac.getCents();
+        matrix[debit][credit] = Math.max(owed, 0);
+        matrix[credit][debit] = Math.max(-owed, 0);
+    }
 
-            // scenario: new value bigger or equal to previous balance so it erases previous balance
-            if (val >= matrix[transac.vCredit][transac.vDebit]) {
-                val -= matrix[transac.vCredit][transac.vDebit];
-                matrix[transac.vCredit][transac.vDebit] = 0;
-                matrix[transac.vDebit][transac.vCredit] = val;
-            }
-
-            // scenario: new value smaller than previous balance so it reduces previous balance
-            else if (val < matrix[transac.vCredit][transac.vDebit]) {
-                matrix[transac.vCredit][transac.vDebit] -= val;
-            }
+    /**
+     * Calculates the net balance for a specific user in cents: what everyone else owes them minus
+     * what they owe everyone else.
+     *
+     * @param vNum the vertex number representing the user.
+     * @return the net balance of the user, in cents.
+     */
+    public long getNetCents(int vNum) {
+        long net = 0;
+        for (int i = 0; i < V; i++) {
+            net += matrix[i][vNum] - matrix[vNum][i];
         }
+        return net;
     }
 
     /**
@@ -144,19 +167,10 @@ public class UserGraph {
      * money. Zero means they are settled up.
      *
      * @param vNum the vertex number representing the user.
-     * @return the net balance of the user.
+     * @return the net balance of the user, in dollars.
      */
     public double getNetAmt(int vNum) {
-        double credit = 0, debit = 0;
-        for (int i = 0; i < V; i++) {
-            credit += matrix[i][vNum];
-        }
-        for (int j = 0; j < V; j++) {
-            debit += matrix[vNum][j];
-        }
-
-        double netAmt = credit - debit;
-        return netAmt;
+        return getNetCents(vNum) / 100.0;
     }
 
     /**
@@ -167,14 +181,14 @@ public class UserGraph {
      * @return a sentence describing the user's balance.
      */
     public String describeBalance(int vNum) {
-        double net = getNetAmt(vNum);
+        long net = getNetCents(vNum);
         boolean isMe = vNum == 0;
-        String name = isMe ? "You" : IntegerStringMap.get(vNum);
+        String name = displayName(vNum);
 
         if (net > 0) {
-            return name + (isMe ? " are owed " : " is owed ") + formatMoney(net);
+            return name + (isMe ? " are owed " : " is owed ") + formatCents(net);
         } else if (net < 0) {
-            return name + (isMe ? " owe " : " owes ") + formatMoney(-net);
+            return name + (isMe ? " owe " : " owes ") + formatCents(-net);
         } else {
             return name + (isMe ? " are settled up" : " is settled up");
         }
@@ -194,54 +208,140 @@ public class UserGraph {
     }
 
     /**
-     * Minimizes cash flow between users by calculating the optimal set of transactions to settle all
-     * balances. Each payment is one line, e.g. "Vin should pay Harold $10.00". The user "Me" is
+     * Finds the fewest payments that settle everyone's balance.
+     *
+     * A group of k people whose balances add up to zero can always be settled with k - 1 payments.
+     * So the fewest payments is (people who owe or are owed) minus (the most zero-sum groups those
+     * people can be split into). With at most 10 people every split can be checked quickly, so this
+     * finds the true minimum. Each group is then settled by repeatedly matching the person owed the
+     * most with the person who owes the most.
+     *
+     * @return the payments, in the order they should be listed. Empty if everyone is settled up.
+     */
+    public List<Payment> settleUp() {
+        // People with a nonzero balance, and their balances (> 0: should receive, < 0: should pay)
+        List<Integer> people = new ArrayList<>();
+        for (int i = 0; i < V; i++) {
+            if (getNetCents(i) != 0) {
+                people.add(i);
+            }
+        }
+        int n = people.size();
+        long[] balance = new long[n];
+        for (int i = 0; i < n; i++) {
+            balance[i] = getNetCents(people.get(i));
+        }
+
+        // sum[mask] = total balance of the people in mask.
+        // groups[mask] = most zero-sum groups the people in mask can be split into (people left over
+        // in a set that doesn't add up to zero don't count as a group).
+        int full = (1 << n) - 1;
+        long[] sum = new long[full + 1];
+        int[] groups = new int[full + 1];
+        for (int mask = 1; mask <= full; mask++) {
+            int lowest = Integer.numberOfTrailingZeros(mask);
+            sum[mask] = sum[mask & (mask - 1)] + balance[lowest];
+            for (int i = 0; i < n; i++) {
+                if ((mask & (1 << i)) != 0) {
+                    groups[mask] = Math.max(groups[mask], groups[mask ^ (1 << i)]);
+                }
+            }
+            if (sum[mask] == 0) {
+                groups[mask]++;
+            }
+        }
+
+        // Walk back from everyone to nobody, removing one person at a time without losing a group.
+        // Read in reverse, the removed people form an order where each zero-sum group is one block.
+        int[] order = new int[n];
+        int mask = full;
+        for (int k = n - 1; k >= 0; k--) {
+            int target = groups[mask] - (sum[mask] == 0 ? 1 : 0);
+            for (int i = 0; i < n; i++) {
+                if ((mask & (1 << i)) != 0 && groups[mask ^ (1 << i)] == target) {
+                    order[k] = i;
+                    mask ^= 1 << i;
+                    break;
+                }
+            }
+        }
+
+        // Cut the order wherever the running total returns to zero, then settle each group
+        List<List<Integer>> zeroSumGroups = new ArrayList<>();
+        List<Integer> current = new ArrayList<>();
+        long running = 0;
+        for (int i : order) {
+            current.add(i);
+            running += balance[i];
+            if (running == 0) {
+                Collections.sort(current);
+                zeroSumGroups.add(current);
+                current = new ArrayList<>();
+            }
+        }
+        zeroSumGroups.sort(Comparator.comparing(group -> group.get(0)));
+
+        List<Payment> payments = new ArrayList<>();
+        for (List<Integer> group : zeroSumGroups) {
+            settleGroup(group, balance, people, payments);
+        }
+        return payments;
+    }
+
+    /**
+     * Settles one zero-sum group by repeatedly having the person who owes the most pay the person
+     * who is owed the most. Ties go to whoever joined the group first.
+     */
+    private void settleGroup(List<Integer> group, long[] balance, List<Integer> people, List<Payment> payments) {
+        while (true) {
+            int receiver = -1, payer = -1;
+            for (int i : group) {
+                if (balance[i] > 0 && (receiver == -1 || balance[i] > balance[receiver])) {
+                    receiver = i;
+                }
+                if (balance[i] < 0 && (payer == -1 || balance[i] < balance[payer])) {
+                    payer = i;
+                }
+            }
+            if (receiver == -1 || payer == -1) {
+                return;
+            }
+            long amount = Math.min(balance[receiver], -balance[payer]);
+            balance[receiver] -= amount;
+            balance[payer] += amount;
+            payments.add(new Payment(people.get(payer), people.get(receiver), amount));
+        }
+    }
+
+    /**
+     * Describes one payment in words, e.g. "Vin should pay Harold $10.00". The user "Me" is
      * written as "You"/"you".
      *
-     * @return a string representing the different minimized cash flow repayments, or an empty
-     *         string if everyone is settled up.
+     * @param payment the payment to describe.
+     * @return the sentence.
+     */
+    public String describePayment(Payment payment) {
+        String amount = formatCents(payment.cents());
+        if (payment.payer() == 0) {
+            return "You should pay " + displayName(payment.receiver()) + " " + amount;
+        } else if (payment.receiver() == 0) {
+            return displayName(payment.payer()) + " should pay you " + amount;
+        }
+        return displayName(payment.payer()) + " should pay " + displayName(payment.receiver()) + " " + amount;
+    }
+
+    /**
+     * Minimizes cash flow between users by calculating the fewest payments that settle all
+     * balances. Each payment is one line, e.g. "Vin should pay Harold $10.00".
+     *
+     * @return a string with one repayment per line, or an empty string if everyone is settled up.
      */
     public String cashFlowMin() {
-        // balancesList.get(i) > 0: person i should receive money; < 0: person i should pay money
-        ArrayList<Double> balancesList = new ArrayList<Double>(V);
-        String resString = new String();
-
-        // find net balances for every vertex
-        for (int i = 0; i < V; i++) {
-            double amt = getNetAmt(i);
-            balancesList.add(amt);
+        StringBuilder sb = new StringBuilder();
+        for (Payment payment : settleUp()) {
+            sb.append(describePayment(payment)).append("\n");
         }
-
-        while (true) {
-            double max = getMax(balancesList);
-            double min = getMin(balancesList);
-
-            if (max == 0 && min == 0) {
-                break;
-            }
-
-            int vMax = balancesList.indexOf(max);
-            int vMin = balancesList.indexOf(min);
-
-
-            // find the smaller absolute value
-            double x = Math.min(Math.abs(max), Math.abs(min));
-
-            balancesList.set(vMin, min += x);
-            balancesList.set(vMax, max -= x);
-
-            if (vMin == 0){
-                resString+= "You should pay " + IntegerStringMap.get(vMax) + " " + formatMoney(x) + "\n";
-            }
-
-            else if (vMax == 0){
-                resString+= IntegerStringMap.get(vMin) + " should pay you " + formatMoney(x) + "\n";
-            }
-
-            else {resString+= IntegerStringMap.get(vMin) + " should pay " + IntegerStringMap.get(vMax) + " " + formatMoney(x) + "\n";}
-        }
-
-        return resString;
+        return sb.toString();
     }
 
     /**
@@ -251,55 +351,18 @@ public class UserGraph {
      * @return the formatted amount.
      */
     public static String formatMoney(double amount) {
-        return String.format("$%.2f", amount);
+        return formatCents(Math.round(amount * 100));
     }
 
     /**
-     * Returns the maximum balance from a list of user balances.
+     * Formats an amount of cents as dollars and cents, e.g. 1500 becomes "$15.00".
      *
-     * @param balancesList the list of user balances.
-     * @return the maximum balance.
+     * @param cents the amount to format, in cents.
+     * @return the formatted amount.
      */
-    private double getMax(ArrayList<Double> balancesList) {
-        double max = 0;
-        for (int i = 0; i < balancesList.size(); i++) {
-            if (balancesList.get(i) > max) {
-                max = balancesList.get(i);
-            }
-        }
-        return max;
-    }
-
-    /**
-     * Returns the minimum balance from a list of user balances.
-     *
-     * @param balancesList the list of user balances.
-     * @return the minimum balance.
-     */
-    private double getMin(ArrayList<Double> balancesList) {
-        double min = 0;
-        for (int i = 0; i < balancesList.size(); i++) {
-            if (balancesList.get(i) < min) {
-                min = balancesList.get(i);
-            }
-        }
-        return min;
-    }
-
-    /**
-     * Prints the adjacency matrix for debugging purposes.
-     *
-     * @param matrix the adjacency matrix to print.
-     */
-    public static void matrixPrint(double matrix[][]) {
-        StringBuilder sj = new StringBuilder();
-        for (double[] row : matrix) {
-            for (double col : row) {
-                sj.append(col);
-                sj.append(", ");
-            }
-            sj.append("\n");
-        }
-        System.out.println(sj.toString());
+    public static String formatCents(long cents) {
+        String sign = cents < 0 ? "-" : "";
+        cents = Math.abs(cents);
+        return String.format("%s$%d.%02d", sign, cents / 100, cents % 100);
     }
 }

@@ -1,4 +1,6 @@
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -32,7 +34,6 @@ public class TabSplitTest {
 
     @Test
     public void testUsersinList(){
-        System.out.println(userGraph.getUserList().toString());
         List<String> testList = new ArrayList<>();
         testList.add("Me");
         testList.add("Isauro");
@@ -121,6 +122,58 @@ public class TabSplitTest {
         assertEquals(userGraph.describeBalance(3), "Vin is settled up");
         userGraph.updateEdge(new Transaction(0, 2, 20, "I paid for Harold"));
         assertEquals(userGraph.describeBalance(0), "You are owed $5.00");
+    }
+
+    @Test
+    public void floatingPointLeftoversAreNotPayments(){
+        userGraph.updateEdge(new Transaction(0, 1, 0.1, "a"));
+        userGraph.updateEdge(new Transaction(0, 1, 0.2, "b"));
+        userGraph.updateEdge(new Transaction(1, 0, 0.3, "c"));
+        assertEquals(userGraph.getNetAmt(0), 0);
+        assertEquals(userGraph.cashFlowMin(), "");
+    }
+
+    @Test
+    public void cashFlowMinFindsFewestPayments(){
+        // Balances +6, +5, -5, -3, -3: the greedy match alone needs 4 payments, the minimum is 3
+        userGraph.addUser("Bret");
+        userGraph.updateEdge(new Transaction(0, 3, 3, null));
+        userGraph.updateEdge(new Transaction(0, 4, 3, null));
+        userGraph.updateEdge(new Transaction(1, 2, 5, null));
+        assertEquals(userGraph.settleUp().size(), 3);
+        assertEquals(userGraph.cashFlowMin(),
+            "Vin should pay you $3.00\n"
+            + "Bret should pay you $3.00\n"
+            + "Harold should pay Isauro $5.00\n");
+    }
+
+    @Test
+    public void addUserRejectsBadNames(){
+        assertEquals(userGraph.checkNewUser("  "), "Enter a name first.");
+        assertEquals(userGraph.checkNewUser("vin"), "Vin is already in the group.");
+        assertEquals(userGraph.checkNewUser("me"), "Me is already in the group.");
+        assertNull(userGraph.checkNewUser(" Bret "));
+        assertThrows(IllegalArgumentException.class, () -> userGraph.addUser("Harold"));
+    }
+
+    @Test
+    public void groupIsCappedAtLimit(){
+        for (int i = userGraph.V(); i < userGraph.getLimit(); i++) {
+            userGraph.addUser("Friend " + i);
+        }
+        assertEquals(userGraph.checkNewUser("One more"), "The group is full (10 people max).");
+        assertThrows(IllegalArgumentException.class, () -> userGraph.addUser("One more"));
+    }
+
+    @Test
+    public void negativeTransactionIsRejected(){
+        assertThrows(IllegalArgumentException.class, () -> new Transaction(0, 1, -5, "refund"));
+    }
+
+    @Test
+    public void formatsCents(){
+        assertEquals(UserGraph.formatCents(5), "$0.05");
+        assertEquals(UserGraph.formatMoney(1234.5), "$1234.50");
     }
 
     @Test

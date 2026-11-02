@@ -9,18 +9,13 @@ import javax.swing.border.*;
  */
 public class Menu extends JPanel {
 
-    private static final int MENU_WIDTH = 525;
-    private static final int MENU_HEIGHT = 725;
-    private static final int CANVAS_WIDTH = 600;
-    private static final int CANVAS_HEIGHT = 800;
-    private static final int BORDER_WIDTH = (CANVAS_WIDTH - MENU_WIDTH) / 2;
-    private static final int BORDER_HEIGHT = (CANVAS_HEIGHT - MENU_HEIGHT) / 2;
-
-    private UserGraph userGraph;
     private JButton friendsTab = new JButton("Friends");
     private JButton transactionsTab = new JButton("Expenses");
-    private JButton quitButton = new JButton("Quit App");
+    private JButton quitButton = new JButton("Quit");
     private JFrame frame;
+
+    // Each tab is built once and kept, so it remembers its state when you come back to it
+    private ParentTab friends, expenses;
 
     /**
      * Constructs a Menu object and sets up the main menu interface.
@@ -30,40 +25,45 @@ public class Menu extends JPanel {
      */
     public Menu(JFrame frame, UserGraph userGraph) {
         this.frame = frame;
-        this.userGraph = userGraph;
+        friends = new FriendsTab(this::returnToMenu, userGraph);
+        expenses = new Expenses(this::returnToMenu, userGraph);
 
         initializeListeners();
 
-        // Background overlay
-        setLayout(new BorderLayout());
-        setBackground(new Color(200, 200, 200)); // Light gray background
-        setBorder(new EmptyBorder(BORDER_HEIGHT, BORDER_WIDTH, BORDER_HEIGHT, BORDER_WIDTH));
+        // Background, with the menu centered in it
+        setLayout(new GridBagLayout());
+        setBackground(ParentTab.BACKGROUND);
 
         // Menu box
         JPanel menuBox = new JPanel();
         menuBox.setLayout(new BoxLayout(menuBox, BoxLayout.Y_AXIS));
-        menuBox.setBackground(Color.WHITE);
-        menuBox.setBorder(new CompoundBorder(new LineBorder(Color.BLACK, 3), new EmptyBorder(30, 0, 0, 0)));
-        add(menuBox, BorderLayout.CENTER);
+        menuBox.setBackground(ParentTab.CARD);
+        menuBox.setBorder(new CompoundBorder(new LineBorder(ParentTab.CARD_BORDER, 1, true), new EmptyBorder(40, 60, 40, 60)));
+        add(menuBox);
 
         // Title text
         JLabel title = new JLabel("TabSplit");
-        title.setForeground(Color.RED);
-        title.setFont(new Font(Font.SANS_SERIF, Font.BOLD | Font.ITALIC, 30));
+        title.setForeground(ParentTab.ACCENT);
+        title.setFont(title.getFont().deriveFont(Font.BOLD, 34f));
         addCentered(menuBox, title);
-        menuBox.add(Box.createVerticalStrut(20));
+        menuBox.add(Box.createVerticalStrut(6));
 
         // Description text
-        JLabel description = new JLabel("Welcome to TabSplit! Select a Tab:");
-        description.setFont(new Font(Font.SANS_SERIF, Font.PLAIN, 20));
+        JLabel description = new JLabel("Split expenses with the fewest payments.");
+        description.setForeground(ParentTab.MUTED);
         addCentered(menuBox, description);
-        menuBox.add(Box.createVerticalStrut(80));
+        menuBox.add(Box.createVerticalStrut(36));
 
-        // Add buttons
+        // Buttons, all the same width
+        Dimension buttonSize = new Dimension(200, friendsTab.getPreferredSize().height);
+        for (JButton button : new JButton[] {friendsTab, transactionsTab, quitButton}) {
+            button.setPreferredSize(buttonSize);
+            button.setMaximumSize(buttonSize);
+        }
         addCentered(menuBox, friendsTab);
-        menuBox.add(Box.createVerticalStrut(20));
+        menuBox.add(Box.createVerticalStrut(10));
         addCentered(menuBox, transactionsTab);
-        menuBox.add(Box.createVerticalStrut(70));
+        menuBox.add(Box.createVerticalStrut(30));
         addCentered(menuBox, quitButton);
     }
 
@@ -76,8 +76,8 @@ public class Menu extends JPanel {
      * Initializes button click listeners for navigating between tabs and quitting the app.
      */
     private void initializeListeners() {
-        friendsTab.addActionListener(e -> switchToTab(new FriendsTab(this::returnToMenu, userGraph)));
-        transactionsTab.addActionListener(e -> switchToTab(new Expenses(this::returnToMenu, userGraph)));
+        friendsTab.addActionListener(e -> switchToTab(friends));
+        transactionsTab.addActionListener(e -> switchToTab(expenses));
         quitButton.addActionListener(e -> System.exit(0));
     }
 
@@ -88,6 +88,9 @@ public class Menu extends JPanel {
      */
     private void switchToTab(JPanel tab) {
         frame.setContentPane(tab); // Replace whatever is showing with the new tab
+        if (tab instanceof ParentTab parentTab) {
+            parentTab.onShow();
+        }
         frame.revalidate();
         frame.repaint();
     }

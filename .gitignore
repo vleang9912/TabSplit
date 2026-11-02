@@ -1,0 +1,6 @@
+.gradle/
+build/
+bin/
+.DS_Store
+.vscode/
+.github/modernize/

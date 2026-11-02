@@ -14,7 +14,10 @@ public class Expenses extends ParentTab {
     // Large enough for any real expense, small enough that adding up cents can't overflow
     private static final BigDecimal MAX_AMOUNT = new BigDecimal("1000000");
 
-    private JComboBox<String> paidByBox, paidForBox;
+    private JComboBox<String> paidByBox;
+    // One checkbox per person, in the same order as the group
+    private List<JCheckBox> splitBoxes = new ArrayList<>();
+    private JPanel splitPanel;
     private JTextField valueBox, descBox;
     private JLabel errorLabel;
     private JButton addTransactionButton;
@@ -23,6 +26,8 @@ public class Expenses extends ParentTab {
     private DefaultListModel<String> settleModel = new DefaultListModel<>();
     private UserGraph userGraph;
     private List<Transaction> transactionList = new ArrayList<>();
+    // One line per expense, e.g. "You paid $80.00 — dinner, split between you, Harold and Vin"
+    private List<String> history = new ArrayList<>();
 
     /**
      * Constructs an Expenses tab.
@@ -43,7 +48,8 @@ public class Expenses extends ParentTab {
         content.setLayout(new BorderLayout(0, 12));
 
         paidByBox = new JComboBox<>();
-        paidForBox = new JComboBox<>();
+        splitPanel = new JPanel(new GridLayout(0, 4, 8, 0)); // rows of 4 names
+        splitPanel.setOpaque(false);
         valueBox = new JTextField(8);
         descBox = new JTextField(12);
         // Enter in either text field adds the expense
@@ -57,10 +63,10 @@ public class Expenses extends ParentTab {
         // Two columns of "Label: field"
         JPanel form = new JPanel(new GridBagLayout());
         form.setOpaque(false);
-        addField(form, 0, 0, "Paid by:", paidByBox);
-        addField(form, 0, 1, "Paid for:", paidForBox);
-        addField(form, 2, 0, "Amount ($):", valueBox);
-        addField(form, 2, 1, "Description:", descBox);
+        addField(form, 0, 0, 1, "Paid by:", paidByBox);
+        addField(form, 2, 0, 1, "Amount ($):", valueBox);
+        addField(form, 0, 1, 3, "Description:", descBox);
+        addField(form, 0, 2, 3, "Split between:", splitPanel);
 
         JPanel buttonRow = new JPanel(new BorderLayout(10, 0));
         buttonRow.setOpaque(false);
@@ -68,7 +74,7 @@ public class Expenses extends ParentTab {
         buttonRow.add(errorLabel, BorderLayout.CENTER);
         GridBagConstraints c = new GridBagConstraints();
         c.gridx = 0;
-        c.gridy = 2;
+        c.gridy = 3;
         c.gridwidth = 4;
         c.anchor = GridBagConstraints.WEST;
         c.fill = GridBagConstraints.HORIZONTAL;
@@ -91,16 +97,17 @@ public class Expenses extends ParentTab {
         refreshResults();
     }
 
-    private void addField(JPanel form, int column, int row, String labelText, JComponent field) {
+    private void addField(JPanel form, int column, int row, int width, String labelText, JComponent field) {
         GridBagConstraints c = new GridBagConstraints();
         c.gridx = column;
         c.gridy = row;
-        c.anchor = GridBagConstraints.EAST;
+        c.anchor = GridBagConstraints.BASELINE_TRAILING; // line the label's text up with the field's
         c.insets = new Insets(4, column == 0 ? 0 : 16, 4, 6);
         form.add(new JLabel(labelText), c);
 
         c.gridx = column + 1;
-        c.anchor = GridBagConstraints.WEST;
+        c.gridwidth = width; // how many columns the field stretches across
+        c.anchor = GridBagConstraints.BASELINE_LEADING;
         c.fill = GridBagConstraints.HORIZONTAL;
         c.weightx = 1;
         c.insets = new Insets(4, 0, 4, 0);
@@ -108,29 +115,32 @@ public class Expenses extends ParentTab {
     }
 
     /**
-     * Refreshes the "Paid by" and "Paid for" dropdowns with the current group, keeping the people
-     * that were already picked.
+     * Refreshes the "Paid by" dropdown and the "Split between" checkboxes with the current group,
+     * keeping what was already picked. New people start out checked.
      */
     @Override
     public void onShow() {
         int paidBy = paidByBox.getSelectedIndex();
-        int paidFor = paidForBox.getSelectedIndex();
         paidByBox.removeAllItems();
-        paidForBox.removeAllItems();
         for (int i = 0; i < userGraph.V(); i++) {
-            String name = i == 0 ? "Me" : userGraph.IntegerStringMap.get(i);
-            paidByBox.addItem(name);
-            paidForBox.addItem(name);
+            paidByBox.addItem(i == 0 ? "Me" : userGraph.IntegerStringMap.get(i));
         }
-        // By default: I paid for the first friend
         paidByBox.setSelectedIndex(paidBy >= 0 ? paidBy : 0);
-        if (userGraph.V() > 1) {
-            paidForBox.setSelectedIndex(paidFor >= 0 ? paidFor : 1);
+
+        // People are only ever added, never removed, so existing checkboxes stay in the right order
+        for (int i = splitBoxes.size(); i < userGraph.V(); i++) {
+            JCheckBox box = new JCheckBox(i == 0 ? "Me" : userGraph.IntegerStringMap.get(i), true);
+            box.setOpaque(false);
+            splitBoxes.add(box);
+            splitPanel.add(box);
         }
 
         boolean hasFriends = userGraph.V() > 1;
-        for (JComponent field : new JComponent[] {paidByBox, paidForBox, valueBox, descBox, addTransactionButton}) {
+        for (JComponent field : new JComponent[] {paidByBox, valueBox, descBox, addTransactionButton}) {
             field.setEnabled(hasFriends);
+        }
+        for (JCheckBox box : splitBoxes) {
+            box.setEnabled(hasFriends);
         }
         errorLabel.setText(hasFriends ? " " : "Add friends first.");
         refreshResults();
@@ -146,10 +156,19 @@ public class Expenses extends ParentTab {
             errorLabel.setText("Add friends first.");
             return;
         }
-        int vCredit = paidByBox.getSelectedIndex();
-        int vDebit = paidForBox.getSelectedIndex();
-        if (vCredit == vDebit) {
-            errorLabel.setText("Pick two different people.");
+        int payer = paidByBox.getSelectedIndex();
+        List<Integer> splitWith = new ArrayList<>();
+        for (int i = 0; i < splitBoxes.size(); i++) {
+            if (splitBoxes.get(i).isSelected()) {
+                splitWith.add(i);
+            }
+        }
+        if (splitWith.isEmpty()) {
+            errorLabel.setText("Pick who to split it with.");
+            return;
+        }
+        if (splitWith.equals(List.of(payer))) {
+            errorLabel.setText("Pick someone besides the person who paid.");
             return;
         }
 
@@ -170,9 +189,14 @@ public class Expenses extends ParentTab {
             return;
         }
 
-        Transaction transac = new Transaction(vCredit, vDebit, amount.doubleValue(), descBox.getText().trim());
-        transactionList.add(transac);
-        userGraph.updateEdge(transac);
+        String description = descBox.getText().trim();
+        try {
+            transactionList.addAll(userGraph.addEvenSplit(payer, splitWith, amount.doubleValue(), description));
+        } catch (IllegalArgumentException e) {
+            errorLabel.setText(e.getMessage());
+            return;
+        }
+        history.add(describeExpense(payer, splitWith, amount, description));
 
         errorLabel.setText(" ");
         valueBox.setText("");
@@ -186,8 +210,8 @@ public class Expenses extends ParentTab {
      */
     private void refreshResults() {
         historyModel.clear();
-        for (Transaction transac : transactionList) {
-            historyModel.addElement(describeTransaction(transac));
+        for (String line : history) {
+            historyModel.addElement(line);
         }
 
         balancesModel.clear();
@@ -206,19 +230,30 @@ public class Expenses extends ParentTab {
     }
 
     /**
-     * Describes a transaction in words, e.g. "Harold paid $20.00 for you — pizza".
+     * Describes an expense in words, e.g. "You paid $80.00 — dinner, split between you, Harold and
+     * Vin", or "Harold paid $20.00 for you — pizza" when it was for one other person.
      *
-     * @param transac the transaction to describe.
      * @return the sentence.
      */
-    private String describeTransaction(Transaction transac) {
-        String payer = userGraph.displayName(transac.getVCredit());
-        String paidFor = transac.getVDebit() == 0 ? "you" : userGraph.displayName(transac.getVDebit());
-        String text = payer + " paid " + UserGraph.formatCents(transac.getCents()) + " for " + paidFor;
-        if (!transac.getDescription().isEmpty()) {
-            text += " — " + transac.getDescription();
+    private String describeExpense(int payer, List<Integer> splitWith, BigDecimal amount, String description) {
+        String money = UserGraph.formatMoney(amount.doubleValue());
+        String text = userGraph.displayName(payer) + " paid " + money;
+        String what = description.isEmpty() ? "" : " — " + description;
+
+        if (splitWith.size() == 1) {
+            return text + " for " + lowercaseYou(splitWith.get(0)) + what;
         }
-        return text;
+        List<String> names = new ArrayList<>();
+        for (int person : splitWith) {
+            names.add(lowercaseYou(person));
+        }
+        String last = names.remove(names.size() - 1);
+        return text + what + ", split between " + String.join(", ", names) + " and " + last;
+    }
+
+    /** "you" for the user "Me", otherwise the person's name. */
+    private String lowercaseYou(int person) {
+        return person == 0 ? "you" : userGraph.displayName(person);
     }
 
     public List<Transaction> getTransactions() {

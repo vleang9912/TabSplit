@@ -145,6 +145,67 @@ public class UserGraph {
     }
 
     /**
+     * Divides an amount into equal shares. When it doesn't divide evenly, the first shares get one
+     * extra cent each, so the shares always add up to exactly the amount.
+     * For example, 8000 cents split 3 ways is 2667, 2667 and 2666.
+     *
+     * @param cents the amount to divide, in cents.
+     * @param ways  how many shares to divide it into.
+     * @return the shares, in cents.
+     * @throws IllegalArgumentException if ways is less than 1.
+     */
+    public static long[] splitEvenly(long cents, int ways) {
+        if (ways < 1) {
+            throw new IllegalArgumentException("Pick at least one person to split with.");
+        }
+        long[] shares = new long[ways];
+        for (int i = 0; i < ways; i++) {
+            shares[i] = cents / ways + (i < cents % ways ? 1 : 0);
+        }
+        return shares;
+    }
+
+    /**
+     * Records one expense split evenly: {@code payer} paid {@code amount}, and everyone in
+     * {@code splitWith} shares it equally. The payer can be in {@code splitWith}; their own share
+     * doesn't change any balance. Each other person becomes one transaction for their share.
+     *
+     * @param payer       the person who paid.
+     * @param splitWith   the people sharing the expense, in the order extra cents are given out.
+     * @param amount      the total amount, in dollars.
+     * @param description what the expense was for, e.g. "dinner".
+     * @return the transactions that were recorded, one per person other than the payer.
+     * @throws IllegalArgumentException if nobody is picked, someone is picked twice, or the amount
+     *                                  isn't greater than 0. Nothing is recorded in that case.
+     */
+    public List<Transaction> addEvenSplit(int payer, List<Integer> splitWith, double amount, String description) {
+        // Check everything first, so a bad input can't leave the expense half-recorded
+        validateVertex(payer);
+        if (new HashSet<>(splitWith).size() != splitWith.size()) {
+            throw new IllegalArgumentException("Each person can only be picked once.");
+        }
+        for (int person : splitWith) {
+            validateVertex(person);
+        }
+        long cents = Math.round(amount * 100);
+        if (cents <= 0) {
+            throw new IllegalArgumentException("Amount must be greater than 0.");
+        }
+        long[] shares = splitEvenly(cents, splitWith.size());
+
+        List<Transaction> recorded = new ArrayList<>();
+        for (int i = 0; i < shares.length; i++) {
+            int person = splitWith.get(i);
+            if (person != payer && shares[i] > 0) {
+                Transaction transac = new Transaction(payer, person, shares[i] / 100.0, description);
+                updateEdge(transac);
+                recorded.add(transac);
+            }
+        }
+        return recorded;
+    }
+
+    /**
      * Calculates the net balance for a specific user in cents: what everyone else owes them minus
      * what they owe everyone else.
      *

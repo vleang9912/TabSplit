@@ -1,3 +1,4 @@
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -174,6 +175,53 @@ public class TabSplitTest {
     public void formatsCents(){
         assertEquals(UserGraph.formatCents(5), "$0.05");
         assertEquals(UserGraph.formatMoney(1234.5), "$1234.50");
+    }
+
+    @Test
+    public void splitEvenlyGivesExtraCentsToFirstShares(){
+        assertArrayEquals(UserGraph.splitEvenly(8000, 4), new long[] {2000, 2000, 2000, 2000});
+        assertArrayEquals(UserGraph.splitEvenly(8000, 3), new long[] {2667, 2667, 2666});
+        assertArrayEquals(UserGraph.splitEvenly(2, 3), new long[] {1, 1, 0});
+        assertThrows(IllegalArgumentException.class, () -> UserGraph.splitEvenly(100, 0));
+    }
+
+    @Test
+    public void evenSplitDinnerForFour(){
+        // I paid $80 for dinner for all 4 of us: everyone else owes me $20
+        userGraph.addEvenSplit(0, List.of(0, 1, 2, 3), 80, "dinner");
+        assertEquals(userGraph.getNetAmt(0), 60);
+        assertEquals(userGraph.getNetAmt(1), -20);
+        assertEquals(userGraph.getNetAmt(2), -20);
+        assertEquals(userGraph.getNetAmt(3), -20);
+    }
+
+    @Test
+    public void evenSplitWithoutThePayer(){
+        // Harold paid $10 for Isauro and Vin only
+        List<Transaction> recorded = userGraph.addEvenSplit(2, List.of(1, 3), 10, "snacks");
+        assertEquals(recorded.size(), 2);
+        assertEquals(userGraph.getNetAmt(2), 10);
+        assertEquals(userGraph.getNetAmt(1), -5);
+        assertEquals(userGraph.getNetAmt(3), -5);
+        assertEquals(userGraph.getNetAmt(0), 0);
+    }
+
+    @Test
+    public void evenSplitUnevenCentsStillAddUp(){
+        // $10 three ways: $3.34, $3.33, $3.33. I'm listed first, so I keep the extra cent
+        userGraph.addEvenSplit(0, List.of(0, 1, 2), 10, "coffee");
+        assertEquals(userGraph.getNetAmt(0), 6.66);
+        assertEquals(userGraph.getNetAmt(1), -3.33);
+        assertEquals(userGraph.getNetAmt(2), -3.33);
+    }
+
+    @Test
+    public void evenSplitRejectsBadInputWithoutRecordingAnything(){
+        assertThrows(IllegalArgumentException.class, () -> userGraph.addEvenSplit(0, List.of(), 10, ""));
+        assertThrows(IllegalArgumentException.class, () -> userGraph.addEvenSplit(0, List.of(1, 1), 10, ""));
+        assertThrows(IllegalArgumentException.class, () -> userGraph.addEvenSplit(0, List.of(1, 2), 0, ""));
+        assertThrows(IllegalArgumentException.class, () -> userGraph.addEvenSplit(0, List.of(1, 99), 10, ""));
+        assertEquals(userGraph.cashFlowMin(), "");
     }
 
     @Test

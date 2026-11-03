@@ -26,8 +26,9 @@ public class Expenses extends ParentTab {
     private boolean updatingShares = false;
     private JTextField valueBox, descBox;
     private JLabel errorLabel;
-    private JButton addTransactionButton;
-    private DefaultListModel<String> historyModel = new DefaultListModel<>();
+    private JButton addTransactionButton, cancelEditButton;
+    private int editingIndex = -1; // which expense the form is editing, -1 when adding a new one
+    private JPanel historyRows = rowPanel();
     private DefaultListModel<String> balancesModel = new DefaultListModel<>();
     private DefaultListModel<String> settleModel = new DefaultListModel<>();
     private UserGraph userGraph;
@@ -112,6 +113,9 @@ public class Expenses extends ParentTab {
 
         addTransactionButton = new JButton("Add expense");
         addTransactionButton.addActionListener(e -> handleAddTransaction());
+        cancelEditButton = linkButton("Cancel");
+        cancelEditButton.addActionListener(e -> stopEditing());
+        cancelEditButton.setVisible(false); // only while editing
         errorLabel = errorLabel();
 
         // two columns of "Label: field"
@@ -128,9 +132,13 @@ public class Expenses extends ParentTab {
         addFullWidth(form, 2, splitHeading, 12);
         addFullWidth(form, 3, splitPanel, 2);
 
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        buttons.setOpaque(false);
+        buttons.add(addTransactionButton);
+        buttons.add(cancelEditButton);
         JPanel buttonRow = new JPanel(new BorderLayout(10, 0));
         buttonRow.setOpaque(false);
-        buttonRow.add(addTransactionButton, BorderLayout.WEST);
+        buttonRow.add(buttons, BorderLayout.WEST);
         buttonRow.add(errorLabel, BorderLayout.CENTER);
         addFullWidth(form, 4, buttonRow, 8);
         content.add(card("Add an expense", form), BorderLayout.NORTH);
@@ -143,7 +151,7 @@ public class Expenses extends ParentTab {
 
         JPanel lists = new JPanel(new GridLayout(2, 1, 0, 12));
         lists.setOpaque(false);
-        lists.add(card("History", plainList(historyModel, "No expenses yet.")));
+        lists.add(card("History", rowList(historyRows)));
         lists.add(results);
         content.add(lists, BorderLayout.CENTER);
 
@@ -221,22 +229,30 @@ public class Expenses extends ParentTab {
     }
 
     /**
-     * Refreshes the "Paid by" dropdown and split rows with the current group, new people start included
+     * Refreshes the "Paid by" dropdown and split rows in case people were added, renamed or removed
      */
     @Override
     public void onShow() {
-        int paidBy = paidByBox.getSelectedIndex();
-        paidByBox.removeAllItems();
-        for (int i = 0; i < userGraph.V(); i++) {
-            paidByBox.addItem(userGraph.IntegerStringMap.get(i));
+        List<String> rowNames = new ArrayList<>();
+        for (SplitRow row : splitRows) {
+            rowNames.add(row.nameLabel.getText());
         }
-        paidByBox.setSelectedIndex(paidBy >= 0 ? paidBy : 0);
+        if (!rowNames.equals(userGraph.getUserList())) {
+            // group changed, so start the form fresh with a row per person
+            int paidBy = paidByBox.getSelectedIndex();
+            paidByBox.removeAllItems();
+            for (int i = 0; i < userGraph.V(); i++) {
+                paidByBox.addItem(userGraph.IntegerStringMap.get(i));
+            }
+            paidByBox.setSelectedIndex(paidBy >= 0 && paidBy < userGraph.V() ? paidBy : 0);
 
-        // people are only ever added, never removed, so old rows stay in the right order
-        for (int i = splitRows.size(); i < userGraph.V(); i++) {
-            splitRows.add(new SplitRow(i));
+            splitRows.clear();
+            for (int i = 0; i < userGraph.V(); i++) {
+                splitRows.add(new SplitRow(i));
+            }
+            layoutSplitPanel();
+            stopEditing();
         }
-        layoutSplitPanel();
 
         boolean hasFriends = userGraph.V() > 1;
         for (JComponent field : new JComponent[] {paidByBox, valueBox, descBox, addTransactionButton}) {
@@ -403,16 +419,78 @@ public class Expenses extends ParentTab {
 
         String description = descBox.getText().trim();
         try {
-            userGraph.addSplit(payer, splitWith, totalCents, shares, description);
+            if (editingIndex >= 0) {
+                userGraph.replaceExpense(editingIndex, payer, splitWith, totalCents, shares, description);
+            } else {
+                userGraph.addSplit(payer, splitWith, totalCents, shares, description);
+            }
         } catch (IllegalArgumentException e) {
             errorLabel.setText(e.getMessage());
             return;
         }
+        stopEditing();
+        valueBox.requestFocusInWindow();
+    }
+
+    /**
+     * Loads expense index back into the form, the button then saves over it instead of adding
+     */
+    private void startEditing(int index) {
+        Expense expense = userGraph.getExpenses().get(index);
+        long[] shares = expense.shares();
+        boolean even = isEvenSplit(expense);
+
+        editingIndex = index;
+        paidByBox.setSelectedIndex(expense.payer());
+        descBox.setText(expense.description());
+        // even splits stay worked out, uneven ones come back as typed shares
+        for (SplitRow row : splitRows) {
+            int position = expense.splitWith().indexOf(row.person);
+            row.included = position >= 0;
+            row.typed = !even && position >= 0;
+            updatingShares = true;
+            row.shareField.setText(row.typed ? plainAmount(shares[position]) : "");
+            updatingShares = false;
+        }
+        valueBox.setText(plainAmount(expense.totalCents()));
+        updateRows();
+
+        addTransactionButton.setText("Save changes");
+        cancelEditButton.setVisible(true);
+        errorLabel.setText(" ");
+        refreshResults();
+    }
+
+    /**
+     * Leaves edit mode (or just resets after adding), empties the form and goes back to "Add expense"
+     */
+    private void stopEditing() {
+        editingIndex = -1;
+        addTransactionButton.setText("Add expense");
+        cancelEditButton.setVisible(false);
         errorLabel.setText(" ");
         valueBox.setText("");
         descBox.setText("");
         clearSplit();
-        valueBox.requestFocusInWindow();
+        refreshResults();
+    }
+
+    /**
+     * Asks first, then deletes expense index
+     */
+    private void deleteExpense(int index) {
+        String text = describeExpense(userGraph.getExpenses().get(index));
+        int answer = JOptionPane.showConfirmDialog(this, "Delete this expense?\n" + text, "Delete expense",
+            JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (answer != JOptionPane.OK_OPTION) {
+            return;
+        }
+        userGraph.removeExpense(index);
+        if (editingIndex == index) {
+            stopEditing(); // the one being edited is gone
+        } else if (editingIndex > index) {
+            editingIndex--; // it moved up one place
+        }
         refreshResults();
     }
 
@@ -420,10 +498,27 @@ public class Expenses extends ParentTab {
      * Shows the history, everyone's balance and the payments needed to settle up.
      */
     private void refreshResults() {
-        historyModel.clear();
-        for (Expense expense : userGraph.getExpenses()) {
-            historyModel.addElement(describeExpense(expense));
+        historyRows.removeAll();
+        List<Expense> expenses = userGraph.getExpenses();
+        if (expenses.isEmpty()) {
+            historyRows.add(emptyHint("No expenses yet."));
         }
+        for (int i = 0; i < expenses.size(); i++) {
+            int index = i;
+            JButton edit = linkButton("Edit");
+            edit.addActionListener(e -> startEditing(index));
+            JButton delete = linkButton("Delete");
+            delete.addActionListener(e -> deleteExpense(index));
+            JPanel row = actionRow(describeExpense(expenses.get(i)), edit, delete);
+            if (i == editingIndex) {
+                // highlight the one in the form
+                row.setOpaque(true);
+                row.setBackground(new Color(232, 241, 255));
+            }
+            historyRows.add(row);
+        }
+        historyRows.revalidate();
+        historyRows.repaint();
 
         balancesModel.clear();
         for (int i = 0; i < userGraph.V(); i++) {
@@ -455,7 +550,7 @@ public class Expenses extends ParentTab {
         if (splitWith.size() == 1) {
             return text + " for " + lowercaseYou(splitWith.get(0)) + what;
         }
-        boolean even = Arrays.equals(shares, UserGraph.splitEvenly(totalCents, shares.length));
+        boolean even = isEvenSplit(expense);
         List<String> parts = new ArrayList<>();
         for (int i = 0; i < splitWith.size(); i++) {
             String name = lowercaseYou(splitWith.get(i));
@@ -464,6 +559,12 @@ public class Expenses extends ParentTab {
         String last = parts.remove(parts.size() - 1);
         String people = String.join(", ", parts) + " and " + last;
         return text + what + (even ? ", split between " + people : ": " + people);
+    }
+
+    // same shares an even split would give, extra cents included
+    private static boolean isEvenSplit(Expense expense) {
+        long[] shares = expense.shares();
+        return Arrays.equals(shares, UserGraph.splitEvenly(expense.totalCents(), shares.length));
     }
 
     /** "you" for the user "Me", otherwise the person's name */
@@ -503,17 +604,5 @@ public class Expenses extends ParentTab {
             public void removeUpdate(DocumentEvent e) { action.run(); }
             public void changedUpdate(DocumentEvent e) { action.run(); }
         };
-    }
-
-    /** A button that looks like a blue text link, like Venmo's "Clear" */
-    private static JButton linkButton(String text) {
-        JButton button = new JButton(text);
-        button.setBorderPainted(false);
-        button.setContentAreaFilled(false);
-        button.setFocusPainted(false);
-        button.setMargin(new Insets(0, 0, 0, 0));
-        button.setForeground(ACCENT);
-        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        return button;
     }
 }

@@ -137,4 +137,78 @@ public abstract class ParentTab extends JPanel {
         label.setForeground(ERROR);
         return label;
     }
+
+    /** A button that looks like a blue text link, like Venmo's "Clear" */
+    static JButton linkButton(String text) {
+        JButton button = new JButton(text);
+        button.setBorderPainted(false);
+        button.setContentAreaFilled(false);
+        button.setFocusPainted(false);
+        button.setMargin(new Insets(0, 0, 0, 0));
+        button.setForeground(ACCENT);
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        return button;
+    }
+
+    /**
+     * One line of a list with links on the right, ie "Vin Leang     Rename  Remove"
+     * @return the row
+     */
+    static JPanel actionRow(String text, JComponent... links) {
+        JPanel row = new JPanel(new BorderLayout(8, 0));
+        row.setOpaque(false);
+        row.setBorder(new EmptyBorder(3, 4, 3, 4));
+        JLabel label = new JLabel(text);
+        label.setToolTipText(text); // full text on hover when it's cut off with "..."
+        label.setMinimumSize(new Dimension(0, label.getPreferredSize().height));
+        row.add(label, BorderLayout.CENTER);
+        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 0));
+        right.setOpaque(false);
+        for (JComponent link : links) {
+            right.add(link);
+        }
+        row.add(right, BorderLayout.EAST);
+        // full width but only as tall as it needs, so rows stack at the top
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
+        return row;
+    }
+
+    /**
+     * A panel for actionRows that's always as wide as the card, so long rows get cut off with "..."
+     * instead of pushing their links out of view
+     * @return the empty panel
+     */
+    static JPanel rowPanel() {
+        return new RowPanel();
+    }
+
+    private static class RowPanel extends JPanel implements Scrollable {
+        public boolean getScrollableTracksViewportWidth() { return true; } // never scroll sideways
+        public boolean getScrollableTracksViewportHeight() { return false; }
+        public Dimension getPreferredScrollableViewportSize() { return getPreferredSize(); }
+        public int getScrollableUnitIncrement(Rectangle r, int orientation, int direction) { return 12; }
+        public int getScrollableBlockIncrement(Rectangle r, int orientation, int direction) { return r.height; }
+    }
+
+    /**
+     * Turns rows into a scrolling top to bottom list for inside a card
+     * @return the rows in a borderless scroll pane
+     */
+    static JScrollPane rowList(JPanel rows) {
+        rows.setLayout(new BoxLayout(rows, BoxLayout.Y_AXIS));
+        rows.setBackground(CARD);
+        JScrollPane scroll = new JScrollPane(rows);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        scroll.getViewport().setBackground(CARD);
+        scroll.getVerticalScrollBar().setUnitIncrement(12);
+        return scroll;
+    }
+
+    /** A grey line of text for an empty list, ie "No expenses yet." */
+    static JLabel emptyHint(String text) {
+        JLabel label = new JLabel(text);
+        label.setForeground(MUTED);
+        label.setBorder(new EmptyBorder(3, 4, 3, 4));
+        return label;
+    }
 }

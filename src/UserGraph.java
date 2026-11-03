@@ -88,19 +88,100 @@ public class UserGraph {
      * @return a message explaining why the name can't be added, or {@code null} if it can.
      */
     public String checkNewUser(String name) {
+        if (V >= LIMIT && !(name == null || name.isBlank())) {
+            return "The group is full (" + LIMIT + " people max).";
+        }
+        return checkName(name, -1);
+    }
+
+    /**
+     * Checks whether person v can be renamed to name
+     * @return why not, or null if they can
+     */
+    public String checkRename(int v, String name) {
+        validateVertex(v);
+        return checkName(name, v);
+    }
+
+    // empty or taken by someone else (ignoring case), skip is the person being renamed, -1 for nobody
+    private String checkName(String name, int skip) {
         String trimmed = name == null ? "" : name.trim();
         if (trimmed.isEmpty()) {
             return "Enter a name first.";
         }
-        if (V >= LIMIT) {
-            return "The group is full (" + LIMIT + " people max).";
-        }
-        for (String existing : userList) {
-            if (existing.equalsIgnoreCase(trimmed)) {
-                return existing + " is already in the group.";
+        for (int i = 0; i < userList.size(); i++) {
+            if (i != skip && userList.get(i).equalsIgnoreCase(trimmed)) {
+                return userList.get(i) + " is already in the group.";
             }
         }
         return null;
+    }
+
+    /**
+     * Renames person v, their expenses stay the same since they're stored by number
+     * @throws IllegalArgumentException if the name is empty or someone else has it
+     */
+    public void renameUser(int v, String name) {
+        String problem = checkRename(v, name);
+        if (problem != null) {
+            throw new IllegalArgumentException(problem);
+        }
+        userList.set(v, name.trim());
+        rebuildMaps();
+    }
+
+    /**
+     * Counts the expenses person v paid for or is part of
+     * @return number of expenses
+     */
+    public int countExpensesWith(int v) {
+        int count = 0;
+        for (Expense expense : expenses) {
+            if (expense.payer() == v || expense.splitWith().contains(v)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Removes person v from the group, everyone after them moves up one number
+     * @throws IllegalArgumentException if v is you, or they're still in an expense
+     */
+    public void removeUser(int v) {
+        validateVertex(v);
+        if (v == 0) {
+            throw new IllegalArgumentException("You can't remove yourself.");
+        }
+        int count = countExpensesWith(v);
+        if (count > 0) {
+            throw new IllegalArgumentException(userList.get(v) + " is in " + count
+                + (count == 1 ? " expense" : " expenses") + ". Delete or edit those first.");
+        }
+        userList.remove(v);
+        V -= 1;
+        rebuildMaps();
+
+        // renumber everyone after v in each expense, ie person 3 becomes 2
+        for (int i = 0; i < expenses.size(); i++) {
+            Expense old = expenses.get(i);
+            List<Integer> splitWith = new ArrayList<>();
+            for (int person : old.splitWith()) {
+                splitWith.add(person > v ? person - 1 : person);
+            }
+            int payer = old.payer() > v ? old.payer() - 1 : old.payer();
+            expenses.set(i, new Expense(payer, splitWith, old.shares(), old.description()));
+        }
+    }
+
+    // refill both name maps from userList after a rename or removal
+    private void rebuildMaps() {
+        IntegerStringMap.clear();
+        StringIntegerMap.clear();
+        for (int i = 0; i < userList.size(); i++) {
+            IntegerStringMap.put(i, userList.get(i));
+            StringIntegerMap.put(userList.get(i), i);
+        }
     }
 
     /**
@@ -229,7 +310,28 @@ public class UserGraph {
      *                                  don't add up to the total, nothing is recorded then
      */
     public void addSplit(int payer, List<Integer> splitWith, long totalCents, long[] shares, String description) {
-        // Check everything first, so a bad input can't leave the expense half-recorded
+        expenses.add(checkedExpense(payer, splitWith, totalCents, shares, description));
+    }
+
+    /**
+     * Swaps the expense at index for an edited version, it keeps its place in the history
+     * @throws IllegalArgumentException if the edit is bad, the old expense stays then
+     */
+    public void replaceExpense(int index, int payer, List<Integer> splitWith, long totalCents, long[] shares, String description) {
+        Objects.checkIndex(index, expenses.size());
+        expenses.set(index, checkedExpense(payer, splitWith, totalCents, shares, description));
+    }
+
+    /**
+     * Deletes the expense at index, balances update on their own since they come from the list
+     */
+    public void removeExpense(int index) {
+        Objects.checkIndex(index, expenses.size());
+        expenses.remove(index);
+    }
+
+    // builds the expense only if everything checks out, so bad input never touches the list
+    private Expense checkedExpense(int payer, List<Integer> splitWith, long totalCents, long[] shares, String description) {
         validateVertex(payer);
         if (splitWith.isEmpty()) {
             throw new IllegalArgumentException("Pick at least one person to split with.");
@@ -257,8 +359,7 @@ public class UserGraph {
             throw new IllegalArgumentException("The shares add up to " + formatCents(sum)
                 + ", not " + formatCents(totalCents) + ".");
         }
-
-        expenses.add(new Expense(payer, splitWith, shares, description));
+        return new Expense(payer, splitWith, shares, description);
     }
 
     /**

@@ -285,6 +285,69 @@ public class TabSplitTest {
     }
 
     @Test
+    public void deletingAnExpenseUndoesIt(){
+        userGraph.addEvenSplit(0, List.of(0, 1), 20, "lunch");
+        userGraph.addEvenSplit(2, List.of(0, 2), 10, "coffee");
+        userGraph.removeExpense(0); // lunch
+        assertEquals(userGraph.getExpenses().size(), 1);
+        assertEquals(userGraph.getExpenses().get(0).description(), "coffee");
+        assertEquals(userGraph.getNetAmt(0), -5);
+        assertEquals(userGraph.getNetAmt(1), 0);
+        assertThrows(IndexOutOfBoundsException.class, () -> userGraph.removeExpense(5));
+    }
+
+    @Test
+    public void editingAnExpenseKeepsItsPlace(){
+        userGraph.addEvenSplit(0, List.of(0, 1), 20, "lunch");
+        userGraph.addEvenSplit(2, List.of(0, 2), 10, "coffee");
+        // lunch was actually $30, split with Harold too
+        userGraph.replaceExpense(0, 0, List.of(0, 1, 2), 3000, new long[] {1000, 1000, 1000}, "lunch");
+        assertEquals(userGraph.getExpenses().get(0).totalCents(), 3000);
+        assertEquals(userGraph.getExpenses().get(1).description(), "coffee");
+        assertEquals(userGraph.getNetAmt(0), 15); // +30 -10 (lunch), -5 (coffee)
+        // a bad edit is rejected and the old version stays
+        assertThrows(IllegalArgumentException.class,
+            () -> userGraph.replaceExpense(0, 0, List.of(0, 1), 3000, new long[] {1000, 1000}, "lunch"));
+        assertEquals(userGraph.getExpenses().get(0).totalCents(), 3000);
+    }
+
+    @Test
+    public void renamingSomeoneKeepsTheirExpenses(){
+        userGraph.addEvenSplit(0, List.of(0, 2), 20, "lunch");
+        userGraph.renameUser(0, " Vin Leang ");
+        userGraph.renameUser(2, "harold"); // same person, different case is fine
+        assertEquals(userGraph.IntegerStringMap.get(0), "Vin Leang");
+        assertEquals(userGraph.StringIntegerMap.get("harold"), 2);
+        assertNull(userGraph.StringIntegerMap.get("Harold"));
+        assertEquals(userGraph.describeBalance(2), "harold owes $10.00");
+        assertEquals(userGraph.checkRename(1, "VIN"), "Vin is already in the group.");
+        assertEquals(userGraph.checkRename(1, ""), "Enter a name first.");
+        assertThrows(IllegalArgumentException.class, () -> userGraph.renameUser(1, "Vin"));
+    }
+
+    @Test
+    public void removingSomeoneRenumbersTheRest(){
+        // Me pays for Vin (person 3), then Isauro (person 1) is removed
+        userGraph.addEvenSplit(0, List.of(3), 12, "movie");
+        userGraph.removeUser(1);
+        assertEquals(userGraph.getUserList(), List.of("Me", "Harold", "Vin"));
+        assertEquals(userGraph.StringIntegerMap.get("Vin"), 2);
+        assertEquals(userGraph.getExpenses().get(0).splitWith(), List.of(2)); // Vin moved from 3 to 2
+        assertEquals(userGraph.describeBalance(2), "Vin owes $12.00");
+        assertEquals(userGraph.cashFlowMin(), "Vin should pay you $12.00\n");
+    }
+
+    @Test
+    public void cantRemoveYourselfOrSomeoneInAnExpense(){
+        userGraph.addEvenSplit(0, List.of(0, 2), 20, "lunch");
+        userGraph.addEvenSplit(2, List.of(3), 5, "snack");
+        assertThrows(IllegalArgumentException.class, () -> userGraph.removeUser(0));
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class, () -> userGraph.removeUser(2));
+        assertEquals(e.getMessage(), "Harold is in 2 expenses. Delete or edit those first.");
+        assertEquals(userGraph.V(), 4);
+    }
+
+    @Test
     public void AddUserInTwoMapsTest(){
         userGraph.addUser("Bret");
         assertEquals(userGraph.IntegerStringMap.get(userGraph.V()-1), "Bret");

@@ -11,7 +11,7 @@ public class FriendsTab extends ParentTab {
     public UserGraph userGraph;
     private JButton addUserButton;
     private JLabel errorLabel, countLabel;
-    private DefaultListModel<String> groupModel = new DefaultListModel<>();
+    private JPanel groupRows = rowPanel();
 
     /**
      * Creates a new FriendsTab with functionality to add users and display the user list.
@@ -48,7 +48,7 @@ public class FriendsTab extends ParentTab {
         countLabel.setForeground(MUTED);
         JPanel groupPanel = new JPanel(new BorderLayout(0, 6));
         groupPanel.setOpaque(false);
-        groupPanel.add(plainList(groupModel, null), BorderLayout.CENTER);
+        groupPanel.add(rowList(groupRows), BorderLayout.CENTER);
         groupPanel.add(countLabel, BorderLayout.SOUTH);
         content.add(card("Group", groupPanel), BorderLayout.CENTER);
 
@@ -82,14 +82,60 @@ public class FriendsTab extends ParentTab {
     }
 
     /**
-     * Shows the current group in the list, with "(you)" after your own name.
+     * Asks for a new name for person v, shows why if it can't be used
+     */
+    private void handleRename(int v) {
+        String current = userGraph.IntegerStringMap.get(v);
+        Object answer = JOptionPane.showInputDialog(this, "New name for " + current + ":", "Rename",
+            JOptionPane.PLAIN_MESSAGE, null, null, current);
+        if (answer == null) {
+            return; // cancelled
+        }
+        String problem = userGraph.checkRename(v, answer.toString());
+        if (problem != null) {
+            errorLabel.setText(problem);
+            return;
+        }
+        userGraph.renameUser(v, answer.toString());
+        errorLabel.setText(" ");
+        refreshGroup();
+    }
+
+    /**
+     * Removes person v, or says which expenses they're still in
+     */
+    private void handleRemove(int v) {
+        try {
+            userGraph.removeUser(v);
+        } catch (IllegalArgumentException e) {
+            errorLabel.setText(e.getMessage());
+            return;
+        }
+        errorLabel.setText(" ");
+        refreshGroup();
+    }
+
+    /**
+     * Shows the current group, one row per person with Rename and Remove, "(you)" after your name
      */
     private void refreshGroup() {
-        groupModel.clear();
+        groupRows.removeAll();
         for (int i = 0; i < userGraph.V(); i++) {
+            int v = i;
             String name = userGraph.IntegerStringMap.get(i);
-            groupModel.addElement(i == 0 ? name + " (you)" : name);
+            JButton rename = linkButton("Rename");
+            rename.addActionListener(e -> handleRename(v));
+            JButton remove = linkButton("Remove");
+            remove.addActionListener(e -> handleRemove(v));
+            if (i == 0) {
+                // you can't remove yourself, a blank the same size keeps Rename lined up
+                groupRows.add(actionRow(name + " (you)", rename, (JComponent) Box.createRigidArea(remove.getPreferredSize())));
+            } else {
+                groupRows.add(actionRow(name, rename, remove));
+            }
         }
+        groupRows.revalidate();
+        groupRows.repaint();
         int size = userGraph.V();
         countLabel.setText(size + " of " + userGraph.getLimit() + " people"
             + (size >= userGraph.getLimit() ? " — the group is full" : ""));

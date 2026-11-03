@@ -1,4 +1,9 @@
+import java.time.DateTimeException;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * The group: its people and every expense between them. Balances are worked out from the
@@ -11,6 +16,10 @@ public class UserGraph {
 
     private static final int LIMIT = 10;
 
+    // 11/3, 11/3/26 or 11/03/2026
+    private static final Pattern DATE = Pattern.compile("(\\d{1,2})/(\\d{1,2})(?:/(\\d{2}|\\d{4}))?");
+    private static final DateTimeFormatter DATE_BOX = DateTimeFormatter.ofPattern("MM/dd/yy");
+
     private int V;
 
     private List<Expense> expenses = new ArrayList<>(); // oldest first
@@ -19,6 +28,9 @@ public class UserGraph {
 
     public Map<Integer, String> IntegerStringMap = new TreeMap<>();
     public Map<String, Integer> StringIntegerMap = new TreeMap<>();
+
+    // runs after every change, ie to save the group, does nothing until set
+    private Runnable onChange = () -> {};
 
     /**
      * One payment needed to settle up: {@code payer} sends {@code cents} to {@code receiver}.
@@ -31,6 +43,14 @@ public class UserGraph {
      */
     public UserGraph() {
         addUser("Me");
+    }
+
+    /**
+     * Sets what runs after every change to the people or expenses, ie saving the group
+     * @param onChange the code to run
+     */
+    public void setOnChange(Runnable onChange) {
+        this.onChange = Objects.requireNonNull(onChange);
     }
 
     /**
@@ -128,6 +148,7 @@ public class UserGraph {
         }
         userList.set(v, name.trim());
         rebuildMaps();
+        onChange.run();
     }
 
     /**
@@ -170,8 +191,9 @@ public class UserGraph {
                 splitWith.add(person > v ? person - 1 : person);
             }
             int payer = old.payer() > v ? old.payer() - 1 : old.payer();
-            expenses.set(i, new Expense(payer, splitWith, old.shares(), old.description()));
+            expenses.set(i, new Expense(payer, splitWith, old.shares(), old.description(), old.date()));
         }
+        onChange.run();
     }
 
     // refill both name maps from userList after a rename or removal
@@ -201,6 +223,7 @@ public class UserGraph {
         IntegerStringMap.put(V, name);
         StringIntegerMap.put(name, V);
         V += 1;
+        onChange.run();
     }
 
     /**
@@ -214,7 +237,8 @@ public class UserGraph {
             return; // paying for yourself or $0 doesn't change anyone's balance
         }
         expenses.add(new Expense(transac.vCredit, List.of(transac.vDebit), new long[] {transac.getCents()},
-            transac.description));
+            transac.description, LocalDate.now()));
+        onChange.run();
     }
 
     /**
@@ -223,6 +247,20 @@ public class UserGraph {
      */
     public List<Expense> getExpenses() {
         return Collections.unmodifiableList(expenses);
+    }
+
+    /**
+     * Gives the expense indexes newest first, same day goes by most recently added
+     * @return indexes into getExpenses()
+     */
+    public List<Integer> historyOrder() {
+        List<Integer> order = new ArrayList<>();
+        for (int i = expenses.size() - 1; i >= 0; i--) {
+            order.add(i);
+        }
+        // sort is stable, so expenses on the same day keep the newest-added-first order
+        order.sort(Comparator.comparing((Integer i) -> expenses.get(i).date()).reversed());
+        return order;
     }
 
     /**
@@ -310,16 +348,37 @@ public class UserGraph {
      *                                  don't add up to the total, nothing is recorded then
      */
     public void addSplit(int payer, List<Integer> splitWith, long totalCents, long[] shares, String description) {
-        expenses.add(checkedExpense(payer, splitWith, totalCents, shares, description));
+        addSplit(payer, splitWith, totalCents, shares, description, LocalDate.now());
     }
 
     /**
-     * Swaps the expense at index for an edited version, it keeps its place in the history
+     * Same as addSplit above, but on a given day instead of today
+     * @param date the day it happened
+     */
+    public void addSplit(int payer, List<Integer> splitWith, long totalCents, long[] shares, String description,
+            LocalDate date) {
+        expenses.add(checkedExpense(payer, splitWith, totalCents, shares, description, date));
+        onChange.run();
+    }
+
+    /**
+     * Swaps the expense at index for an edited version, it keeps its place and its date
      * @throws IllegalArgumentException if the edit is bad, the old expense stays then
      */
     public void replaceExpense(int index, int payer, List<Integer> splitWith, long totalCents, long[] shares, String description) {
         Objects.checkIndex(index, expenses.size());
-        expenses.set(index, checkedExpense(payer, splitWith, totalCents, shares, description));
+        replaceExpense(index, payer, splitWith, totalCents, shares, description, expenses.get(index).date());
+    }
+
+    /**
+     * Same as replaceExpense above, but the date can change too
+     * @param date the day it happened
+     */
+    public void replaceExpense(int index, int payer, List<Integer> splitWith, long totalCents, long[] shares,
+            String description, LocalDate date) {
+        Objects.checkIndex(index, expenses.size());
+        expenses.set(index, checkedExpense(payer, splitWith, totalCents, shares, description, date));
+        onChange.run();
     }
 
     /**
@@ -328,11 +387,16 @@ public class UserGraph {
     public void removeExpense(int index) {
         Objects.checkIndex(index, expenses.size());
         expenses.remove(index);
+        onChange.run();
     }
 
     // builds the expense only if everything checks out, so bad input never touches the list
-    private Expense checkedExpense(int payer, List<Integer> splitWith, long totalCents, long[] shares, String description) {
+    private Expense checkedExpense(int payer, List<Integer> splitWith, long totalCents, long[] shares, String description,
+            LocalDate date) {
         validateVertex(payer);
+        if (date == null) {
+            throw new IllegalArgumentException("Pick a date.");
+        }
         if (splitWith.isEmpty()) {
             throw new IllegalArgumentException("Pick at least one person to split with.");
         }
@@ -359,7 +423,7 @@ public class UserGraph {
             throw new IllegalArgumentException("The shares add up to " + formatCents(sum)
                 + ", not " + formatCents(totalCents) + ".");
         }
-        return new Expense(payer, splitWith, shares, description);
+        return new Expense(payer, splitWith, shares, description, date);
     }
 
     /**
@@ -588,5 +652,38 @@ public class UserGraph {
         String sign = cents < 0 ? "-" : "";
         cents = Math.abs(cents);
         return String.format("%s$%d.%02d", sign, cents / 100, cents % 100);
+    }
+
+    /**
+     * Reads a date typed like 11/3, 11/3/26 or 11/03/2026, no year means this year
+     * @param text what was typed
+     * @param today used for the year when it's left out
+     * @return the date, or null if it isn't a real date
+     */
+    public static LocalDate parseDate(String text, LocalDate today) {
+        Matcher m = DATE.matcher(text.trim());
+        if (!m.matches()) {
+            return null;
+        }
+        int year = today.getYear();
+        if (m.group(3) != null) {
+            year = Integer.parseInt(m.group(3));
+            if (m.group(3).length() == 2) {
+                year += 2000; // 26 means 2026
+            }
+        }
+        try {
+            return LocalDate.of(year, Integer.parseInt(m.group(1)), Integer.parseInt(m.group(2)));
+        } catch (DateTimeException e) {
+            return null; // ie 2/30 or 13/1
+        }
+    }
+
+    /**
+     * Formats a date for the date box, ie "11/03/26"
+     * @return the date as MM/dd/yy
+     */
+    public static String formatDate(LocalDate date) {
+        return date.format(DATE_BOX);
     }
 }

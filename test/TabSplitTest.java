@@ -1,13 +1,21 @@
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 
 public class TabSplitTest {
@@ -354,5 +362,104 @@ public class TabSplitTest {
         assertEquals(userGraph.StringIntegerMap.get("Bret"), 4);
     }
 
+    @Test
+    public void expensesKeepTheirDate(){
+        LocalDate oct5 = LocalDate.of(2026, 10, 5);
+        userGraph.addSplit(0, List.of(1, 2), 2000, new long[] {1000, 1000}, "dinner", oct5);
+        userGraph.addEvenSplit(0, List.of(1), 10, "coffee"); // no date given means today
+        assertEquals(userGraph.getExpenses().get(0).date(), oct5);
+        assertEquals(userGraph.getExpenses().get(1).date(), LocalDate.now());
+        // editing without a date keeps the old one, editing with one changes it
+        userGraph.replaceExpense(0, 0, List.of(1, 2), 3000, new long[] {1500, 1500}, "dinner");
+        assertEquals(userGraph.getExpenses().get(0).date(), oct5);
+        userGraph.replaceExpense(0, 0, List.of(1, 2), 3000, new long[] {1500, 1500}, "dinner", oct5.plusDays(1));
+        assertEquals(userGraph.getExpenses().get(0).date(), LocalDate.of(2026, 10, 6));
+        // removing someone keeps everyone else's dates
+        userGraph.removeUser(3);
+        assertEquals(userGraph.getExpenses().get(0).date(), LocalDate.of(2026, 10, 6));
+    }
 
+    @Test
+    public void historyIsNewestFirst(){
+        userGraph.addSplit(0, List.of(1), 100, new long[] {100}, "a", LocalDate.of(2026, 10, 5));
+        userGraph.addSplit(0, List.of(1), 100, new long[] {100}, "b", LocalDate.of(2026, 11, 1));
+        userGraph.addSplit(0, List.of(1), 100, new long[] {100}, "c", LocalDate.of(2026, 9, 30));
+        userGraph.addSplit(0, List.of(1), 100, new long[] {100}, "d", LocalDate.of(2026, 10, 5));
+        // b is newest, then d before a since d was added later on the same day, then c
+        assertEquals(userGraph.historyOrder(), List.of(1, 3, 0, 2));
+    }
+
+    @Test
+    public void readingTypedDates(){
+        LocalDate today = LocalDate.of(2026, 11, 3);
+        assertEquals(UserGraph.parseDate("11/3", today), today);
+        assertEquals(UserGraph.parseDate(" 11/03/26 ", today), today);
+        assertEquals(UserGraph.parseDate("1/2/2025", today), LocalDate.of(2025, 1, 2));
+        assertEquals(UserGraph.parseDate("12/31/27", today), LocalDate.of(2027, 12, 31)); // future is fine
+        assertNull(UserGraph.parseDate("2/30/26", today));
+        assertNull(UserGraph.parseDate("13/1", today));
+        assertNull(UserGraph.parseDate("11-3-26", today));
+        assertNull(UserGraph.parseDate("11/3/202", today));
+        assertNull(UserGraph.parseDate("", today));
+        assertEquals(UserGraph.formatDate(LocalDate.of(2026, 1, 9)), "01/09/26");
+    }
+
+    @Test
+    public void savingThenLoadingGivesTheSameGroup(@TempDir Path dir) throws IOException {
+        userGraph.renameUser(0, "Vin Leang");
+        userGraph.addSplit(1, List.of(0, 2, 3), 8000, new long[] {3200, 2400, 2400}, "dinner",
+            LocalDate.of(2026, 10, 5));
+        userGraph.addEvenSplit(0, List.of(3), 12, "");
+        // folder doesn't exist yet, save makes it
+        GroupStore store = new GroupStore(dir.resolve("tabsplit").resolve("group.json"));
+        assertFalse(store.exists());
+        store.save(userGraph);
+        assertTrue(store.exists());
+
+        UserGraph loaded = store.load();
+        assertEquals(loaded.getUserList(), List.of("Vin Leang", "Isauro", "Harold", "Vin"));
+        assertEquals(loaded.getExpenses().size(), 2);
+        Expense dinner = loaded.getExpenses().get(0);
+        assertEquals(dinner.payer(), 1);
+        assertEquals(dinner.splitWith(), List.of(0, 2, 3));
+        assertArrayEquals(dinner.shares(), new long[] {3200, 2400, 2400});
+        assertEquals(dinner.description(), "dinner");
+        assertEquals(dinner.date(), LocalDate.of(2026, 10, 5));
+        assertEquals(loaded.getExpenses().get(1).description(), "");
+        for (int i = 0; i < 4; i++) {
+            assertEquals(loaded.getNetCents(i), userGraph.getNetCents(i));
+        }
+    }
+
+    @Test
+    public void damagedSaveFileIsRefusedAndKept(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("group.json");
+        GroupStore store = new GroupStore(file);
+        Files.writeString(file, "{ not json");
+        assertThrows(IOException.class, store::load);
+        // valid json but the expense's shares don't make sense
+        Files.writeString(file, "{\"version\": 1, \"people\": [\"Me\", \"Ann\"], \"expenses\": "
+            + "[{\"payer\": 0, \"splitWith\": [5], \"shares\": [100], \"description\": \"\", \"date\": \"2026-11-03\"}]}");
+        assertThrows(IOException.class, store::load);
+        Path bad = store.moveAside();
+        assertFalse(store.exists());
+        assertTrue(Files.exists(bad));
+        assertEquals(bad.getFileName().toString(), "group.json.bad");
+    }
+
+    @Test
+    public void everyChangeRunsOnChange(){
+        int[] count = {0};
+        userGraph.setOnChange(() -> count[0]++);
+        userGraph.addUser("Ann");
+        userGraph.renameUser(4, "Anne");
+        userGraph.addEvenSplit(0, List.of(1), 10, "");
+        userGraph.replaceExpense(0, 0, List.of(1), 2000, new long[] {2000}, "");
+        userGraph.removeExpense(0);
+        userGraph.removeUser(4);
+        assertEquals(count[0], 6);
+        // a rejected change doesn't count
+        assertThrows(IllegalArgumentException.class, () -> userGraph.addUser(""));
+        assertEquals(count[0], 6);
+    }
 }

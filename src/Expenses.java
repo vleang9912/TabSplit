@@ -1,6 +1,8 @@
 import java.awt.*;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.List;
 
@@ -24,7 +26,7 @@ public class Expenses extends ParentTab {
     private JButton clearButton;
     // true while the code fills in share boxes, so it doesn't count as typing
     private boolean updatingShares = false;
-    private JTextField valueBox, descBox;
+    private JTextField valueBox, descBox, dateBox;
     private JLabel errorLabel;
     private JButton addTransactionButton, cancelEditButton;
     private int editingIndex = -1; // which expense the form is editing, -1 when adding a new one
@@ -107,9 +109,17 @@ public class Expenses extends ParentTab {
         valueBox = new JTextField(8);
         valueBox.getDocument().addDocumentListener(onChange(this::recalculateShares));
         descBox = new JTextField(12);
-        // enter in either text field adds the expense
+        dateBox = new JTextField(UserGraph.formatDate(LocalDate.now()), 7);
+        dateBox.setToolTipText("MM/DD/YY, or use the up and down arrows to change it by a day");
+        // up and down arrows move the date by a day
+        dateBox.getInputMap().put(KeyStroke.getKeyStroke("UP"), "nextDay");
+        dateBox.getInputMap().put(KeyStroke.getKeyStroke("DOWN"), "previousDay");
+        dateBox.getActionMap().put("nextDay", runAction(() -> shiftDate(1)));
+        dateBox.getActionMap().put("previousDay", runAction(() -> shiftDate(-1)));
+        // enter in any text field adds the expense
         valueBox.addActionListener(e -> handleAddTransaction());
         descBox.addActionListener(e -> handleAddTransaction());
+        dateBox.addActionListener(e -> handleAddTransaction());
 
         addTransactionButton = new JButton("Add expense");
         addTransactionButton.addActionListener(e -> handleAddTransaction());
@@ -123,7 +133,8 @@ public class Expenses extends ParentTab {
         form.setOpaque(false);
         addField(form, 0, 0, 1, "Paid by:", paidByBox);
         addField(form, 2, 0, 1, "Amount ($):", valueBox);
-        addField(form, 0, 1, 3, "Description:", descBox);
+        addField(form, 0, 1, 1, "Description:", descBox);
+        addField(form, 2, 1, 1, "Date:", dateBox);
 
         // split heading and rows, full width under the fields
         JLabel splitHeading = new JLabel("SPLIT");
@@ -255,7 +266,7 @@ public class Expenses extends ParentTab {
         }
 
         boolean hasFriends = userGraph.V() > 1;
-        for (JComponent field : new JComponent[] {paidByBox, valueBox, descBox, addTransactionButton}) {
+        for (JComponent field : new JComponent[] {paidByBox, valueBox, descBox, dateBox, addTransactionButton}) {
             field.setEnabled(hasFriends);
         }
         errorLabel.setText(hasFriends ? " " : "Add friends first.");
@@ -417,12 +428,18 @@ public class Expenses extends ParentTab {
             shares[i] = share;
         }
 
+        LocalDate date = UserGraph.parseDate(dateBox.getText(), LocalDate.now());
+        if (date == null) {
+            errorLabel.setText("Date should look like " + UserGraph.formatDate(LocalDate.now()) + ".");
+            return;
+        }
+
         String description = descBox.getText().trim();
         try {
             if (editingIndex >= 0) {
-                userGraph.replaceExpense(editingIndex, payer, splitWith, totalCents, shares, description);
+                userGraph.replaceExpense(editingIndex, payer, splitWith, totalCents, shares, description, date);
             } else {
-                userGraph.addSplit(payer, splitWith, totalCents, shares, description);
+                userGraph.addSplit(payer, splitWith, totalCents, shares, description, date);
             }
         } catch (IllegalArgumentException e) {
             errorLabel.setText(e.getMessage());
@@ -443,6 +460,7 @@ public class Expenses extends ParentTab {
         editingIndex = index;
         paidByBox.setSelectedIndex(expense.payer());
         descBox.setText(expense.description());
+        dateBox.setText(UserGraph.formatDate(expense.date()));
         // even splits stay worked out, uneven ones come back as typed shares
         for (SplitRow row : splitRows) {
             int position = expense.splitWith().indexOf(row.person);
@@ -471,6 +489,7 @@ public class Expenses extends ParentTab {
         errorLabel.setText(" ");
         valueBox.setText("");
         descBox.setText("");
+        dateBox.setText(UserGraph.formatDate(LocalDate.now())); // back to today for the next one
         clearSplit();
         refreshResults();
     }
@@ -503,14 +522,14 @@ public class Expenses extends ParentTab {
         if (expenses.isEmpty()) {
             historyRows.add(emptyHint("No expenses yet."));
         }
-        for (int i = 0; i < expenses.size(); i++) {
-            int index = i;
+        // newest first, index is still the expense's place in the list for edit and delete
+        for (int index : userGraph.historyOrder()) {
             JButton edit = linkButton("Edit");
             edit.addActionListener(e -> startEditing(index));
             JButton delete = linkButton("Delete");
             delete.addActionListener(e -> deleteExpense(index));
-            JPanel row = actionRow(describeExpense(expenses.get(i)), edit, delete);
-            if (i == editingIndex) {
+            JPanel row = actionRow(describeExpense(expenses.get(index)), edit, delete);
+            if (index == editingIndex) {
                 // highlight the one in the form
                 row.setOpaque(true);
                 row.setBackground(new Color(232, 241, 255));
@@ -536,7 +555,7 @@ public class Expenses extends ParentTab {
     }
 
     /**
-     * Describes an expense in words, ie "You paid $80.00 — dinner, split between you, Vin and John",
+     * Describes an expense in words, ie "Nov 3 · You paid $80.00 — dinner, split between you, Vin and John",
      * or with each share listed when the split isn't even
      * @return the sentence for the history list
      */
@@ -544,7 +563,8 @@ public class Expenses extends ParentTab {
         List<Integer> splitWith = expense.splitWith();
         long[] shares = expense.shares();
         long totalCents = expense.totalCents();
-        String text = userGraph.displayName(expense.payer()) + " paid " + UserGraph.formatCents(totalCents);
+        String text = shortDate(expense.date()) + " · " + userGraph.displayName(expense.payer()) + " paid "
+            + UserGraph.formatCents(totalCents);
         String what = expense.description().isEmpty() ? "" : " — " + expense.description();
 
         if (splitWith.size() == 1) {
@@ -565,6 +585,20 @@ public class Expenses extends ParentTab {
     private static boolean isEvenSplit(Expense expense) {
         long[] shares = expense.shares();
         return Arrays.equals(shares, UserGraph.splitEvenly(expense.totalCents(), shares.length));
+    }
+
+    /** "Nov 3" for this year, "Nov 3, 2025" for other years */
+    private static String shortDate(LocalDate date) {
+        String pattern = date.getYear() == LocalDate.now().getYear() ? "MMM d" : "MMM d, yyyy";
+        return date.format(DateTimeFormatter.ofPattern(pattern));
+    }
+
+    /**
+     * Moves the date box by some days, starting from today if what's typed isn't a date
+     */
+    private void shiftDate(int days) {
+        LocalDate date = UserGraph.parseDate(dateBox.getText(), LocalDate.now());
+        dateBox.setText(UserGraph.formatDate((date == null ? LocalDate.now() : date).plusDays(days)));
     }
 
     /** "you" for the user "Me", otherwise the person's name */
@@ -595,6 +629,13 @@ public class Expenses extends ParentTab {
     /** Formats cents for a share box without the $, ie 2667 becomes "26.67" */
     private static String plainAmount(long cents) {
         return String.format("%d.%02d", cents / 100, cents % 100);
+    }
+
+    /** A key action that runs the given code */
+    private static Action runAction(Runnable code) {
+        return new AbstractAction() {
+            public void actionPerformed(java.awt.event.ActionEvent e) { code.run(); }
+        };
     }
 
     /** A listener that runs the action whenever a field's text changes */

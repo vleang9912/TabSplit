@@ -1,9 +1,12 @@
 import java.awt.*;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.*;
 import java.util.List;
 
 import javax.swing.*;
+import javax.swing.event.DocumentEvent;
+import javax.swing.event.DocumentListener;
 
 /**
  * The Expenses class manages the "Expenses" tab in a user interface.
@@ -11,13 +14,16 @@ import javax.swing.*;
  * and calculate cash flow minimization based on a user graph.
  */
 public class Expenses extends ParentTab {
-    // Large enough for any real expense, small enough that adding up cents can't overflow
+    // big enough for any real expense, small enough that cents can't overflow
     private static final BigDecimal MAX_AMOUNT = new BigDecimal("1000000");
 
     private JComboBox<String> paidByBox;
-    // One checkbox per person, in the same order as the group
-    private List<JCheckBox> splitBoxes = new ArrayList<>();
+    private List<SplitRow> splitRows = new ArrayList<>(); // same order as the group
     private JPanel splitPanel;
+    private JLabel remainingLabel;
+    private JButton clearButton;
+    // true while the code fills in share boxes, so it doesn't count as typing
+    private boolean updatingShares = false;
     private JTextField valueBox, descBox;
     private JLabel errorLabel;
     private JButton addTransactionButton;
@@ -25,9 +31,50 @@ public class Expenses extends ParentTab {
     private DefaultListModel<String> balancesModel = new DefaultListModel<>();
     private DefaultListModel<String> settleModel = new DefaultListModel<>();
     private UserGraph userGraph;
-    private List<Transaction> transactionList = new ArrayList<>();
-    // One line per expense, e.g. "You paid $80.00 — dinner, split between you, Harold and Vin"
-    private List<String> history = new ArrayList<>();
+
+    /**
+     * One person's line in the split: name, share box and a remove/add back link
+     */
+    private class SplitRow {
+        final int person;
+        final JLabel nameLabel = new JLabel();
+        final JLabel noteLabel = new JLabel();
+        final JTextField shareField = new JTextField(7);
+        final JButton toggleButton = linkButton("Add back");
+        boolean included = true;
+        boolean typed = false; // typed in by hand, so the other shares work around it
+
+        SplitRow(int person) {
+            this.person = person;
+            nameLabel.setText(userGraph.IntegerStringMap.get(person));
+            noteLabel.setForeground(MUTED);
+            shareField.setHorizontalAlignment(JTextField.RIGHT);
+            shareField.getDocument().addDocumentListener(onChange(() -> {
+                if (!updatingShares) {
+                    // clearing a box makes it an even share again
+                    typed = !shareField.getText().isBlank();
+                    // swing won't let a box change while it's reporting a change, so wait a moment
+                    SwingUtilities.invokeLater(Expenses.this::recalculateShares);
+                }
+            }));
+            // a cleared box stays blank while you're in it, then gets its share when you leave
+            shareField.addFocusListener(new java.awt.event.FocusAdapter() {
+                @Override
+                public void focusLost(java.awt.event.FocusEvent e) {
+                    recalculateShares();
+                }
+            });
+
+            // keep the width of the longer text so the column doesn't jump
+            toggleButton.setPreferredSize(toggleButton.getPreferredSize());
+            toggleButton.setHorizontalAlignment(SwingConstants.RIGHT);
+            toggleButton.addActionListener(e -> {
+                included = !included;
+                typed = false;
+                updateRows();
+            });
+        }
+    }
 
     /**
      * Constructs an Expenses tab.
@@ -48,11 +95,18 @@ public class Expenses extends ParentTab {
         content.setLayout(new BorderLayout(0, 12));
 
         paidByBox = new JComboBox<>();
-        splitPanel = new JPanel(new GridLayout(0, 4, 8, 0)); // rows of 4 names
+        paidByBox.addActionListener(e -> updateRows()); // moves the "paid the bill" note
+        splitPanel = new JPanel(new GridBagLayout());
         splitPanel.setOpaque(false);
+        remainingLabel = new JLabel(" ");
+        remainingLabel.setForeground(ERROR);
+        clearButton = linkButton("Clear");
+        clearButton.setToolTipText("Split evenly between everyone again");
+        clearButton.addActionListener(e -> clearSplit());
         valueBox = new JTextField(8);
+        valueBox.getDocument().addDocumentListener(onChange(this::recalculateShares));
         descBox = new JTextField(12);
-        // Enter in either text field adds the expense
+        // enter in either text field adds the expense
         valueBox.addActionListener(e -> handleAddTransaction());
         descBox.addActionListener(e -> handleAddTransaction());
 
@@ -60,29 +114,28 @@ public class Expenses extends ParentTab {
         addTransactionButton.addActionListener(e -> handleAddTransaction());
         errorLabel = errorLabel();
 
-        // Two columns of "Label: field"
+        // two columns of "Label: field"
         JPanel form = new JPanel(new GridBagLayout());
         form.setOpaque(false);
         addField(form, 0, 0, 1, "Paid by:", paidByBox);
         addField(form, 2, 0, 1, "Amount ($):", valueBox);
         addField(form, 0, 1, 3, "Description:", descBox);
-        addField(form, 0, 2, 3, "Split between:", splitPanel);
+
+        // split heading and rows, full width under the fields
+        JLabel splitHeading = new JLabel("SPLIT");
+        splitHeading.setFont(splitHeading.getFont().deriveFont(Font.BOLD, 11f));
+        splitHeading.setForeground(MUTED);
+        addFullWidth(form, 2, splitHeading, 12);
+        addFullWidth(form, 3, splitPanel, 2);
 
         JPanel buttonRow = new JPanel(new BorderLayout(10, 0));
         buttonRow.setOpaque(false);
         buttonRow.add(addTransactionButton, BorderLayout.WEST);
         buttonRow.add(errorLabel, BorderLayout.CENTER);
-        GridBagConstraints c = new GridBagConstraints();
-        c.gridx = 0;
-        c.gridy = 3;
-        c.gridwidth = 4;
-        c.anchor = GridBagConstraints.WEST;
-        c.fill = GridBagConstraints.HORIZONTAL;
-        c.insets = new Insets(8, 0, 0, 0);
-        form.add(buttonRow, c);
+        addFullWidth(form, 4, buttonRow, 8);
         content.add(card("Add an expense", form), BorderLayout.NORTH);
 
-        // History on top, balances and repayments side by side below it
+        // history on top, balances and repayments side by side below it
         JPanel results = new JPanel(new GridLayout(1, 2, 12, 0));
         results.setOpaque(false);
         results.add(card("Balances", plainList(balancesModel, null)));
@@ -101,7 +154,7 @@ public class Expenses extends ParentTab {
         GridBagConstraints c = new GridBagConstraints();
         c.gridx = column;
         c.gridy = row;
-        c.anchor = GridBagConstraints.BASELINE_TRAILING; // line the label's text up with the field's
+        c.anchor = GridBagConstraints.BASELINE_TRAILING; // line up the label's text with the field's
         c.insets = new Insets(4, column == 0 ? 0 : 16, 4, 6);
         form.add(new JLabel(labelText), c);
 
@@ -114,9 +167,61 @@ public class Expenses extends ParentTab {
         form.add(field, c);
     }
 
+    private void addFullWidth(JPanel form, int row, JComponent component, int topGap) {
+        GridBagConstraints c = new GridBagConstraints();
+        c.gridx = 0;
+        c.gridy = row;
+        c.gridwidth = 4;
+        c.anchor = GridBagConstraints.WEST;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        c.insets = new Insets(topGap, 0, 0, 0);
+        form.add(component, c);
+    }
+
     /**
-     * Refreshes the "Paid by" dropdown and the "Split between" checkboxes with the current group,
-     * keeping what was already picked. New people start out checked.
+     * Lays out one line per person (name, note, $ box, link), then the remaining/Clear line
+     */
+    private void layoutSplitPanel() {
+        splitPanel.removeAll();
+        GridBagConstraints c = new GridBagConstraints();
+        c.insets = new Insets(3, 0, 3, 6);
+        for (int i = 0; i < splitRows.size(); i++) {
+            SplitRow row = splitRows.get(i);
+            c.gridy = i;
+            c.gridx = 0;
+            c.weightx = 1; // name takes the spare space so everything after it sits on the right
+            c.anchor = GridBagConstraints.WEST;
+            splitPanel.add(row.nameLabel, c);
+            c.weightx = 0;
+            c.gridx = 1;
+            c.anchor = GridBagConstraints.EAST; // note sits right before the $
+            splitPanel.add(row.noteLabel, c);
+            c.gridx = 2;
+            JLabel dollar = new JLabel("$");
+            dollar.setForeground(MUTED);
+            splitPanel.add(dollar, c);
+            c.gridx = 3;
+            splitPanel.add(row.shareField, c);
+            c.gridx = 4;
+            splitPanel.add(row.toggleButton, c);
+        }
+
+        c.gridy = splitRows.size();
+        c.gridx = 0;
+        c.gridwidth = 4;
+        c.weightx = 1;
+        c.anchor = GridBagConstraints.WEST;
+        splitPanel.add(remainingLabel, c);
+        c.gridx = 4;
+        c.gridwidth = 1;
+        c.weightx = 0;
+        c.anchor = GridBagConstraints.EAST;
+        splitPanel.add(clearButton, c);
+        splitPanel.revalidate();
+    }
+
+    /**
+     * Refreshes the "Paid by" dropdown and split rows with the current group, new people start included
      */
     @Override
     public void onShow() {
@@ -127,23 +232,122 @@ public class Expenses extends ParentTab {
         }
         paidByBox.setSelectedIndex(paidBy >= 0 ? paidBy : 0);
 
-        // People are only ever added, never removed, so existing checkboxes stay in the right order
-        for (int i = splitBoxes.size(); i < userGraph.V(); i++) {
-            JCheckBox box = new JCheckBox(userGraph.IntegerStringMap.get(i), true);
-            box.setOpaque(false);
-            splitBoxes.add(box);
-            splitPanel.add(box);
+        // people are only ever added, never removed, so old rows stay in the right order
+        for (int i = splitRows.size(); i < userGraph.V(); i++) {
+            splitRows.add(new SplitRow(i));
         }
+        layoutSplitPanel();
 
         boolean hasFriends = userGraph.V() > 1;
         for (JComponent field : new JComponent[] {paidByBox, valueBox, descBox, addTransactionButton}) {
             field.setEnabled(hasFriends);
         }
-        for (JCheckBox box : splitBoxes) {
-            box.setEnabled(hasFriends);
-        }
         errorLabel.setText(hasFriends ? " " : "Add friends first.");
+        updateRows();
         refreshResults();
+    }
+
+    /**
+     * Updates how each row looks (left out or not, who paid), then recalculates the shares
+     */
+    private void updateRows() {
+        int payer = paidByBox.getSelectedIndex();
+        updatingShares = true;
+        for (SplitRow row : splitRows) {
+            row.toggleButton.setText(row.included ? "Remove" : "Add back");
+            row.shareField.setEnabled(row.included);
+            row.nameLabel.setForeground(row.included ? Color.BLACK : MUTED);
+            row.noteLabel.setText(row.person == payer ? "paid the bill" : "");
+            if (!row.included) {
+                row.shareField.setText("");
+            }
+        }
+        updatingShares = false;
+        recalculateShares();
+    }
+
+    /**
+     * Fills in every share that wasn't typed in so they add up to the amount, ie $80 with John at $32
+     * gives the other two $24 each
+     */
+    private void recalculateShares() {
+        if (updatingShares) {
+            return;
+        }
+        List<SplitRow> included = includedRows();
+        Long total = parseCents(valueBox.getText());
+
+        // typed shares stay as they are, null means work it out
+        Long[] typedIn = new Long[included.size()];
+        boolean typedSharesValid = true;
+        for (int i = 0; i < included.size(); i++) {
+            SplitRow row = included.get(i);
+            if (row.typed) {
+                typedIn[i] = parseCents(row.shareField.getText());
+                if (typedIn[i] == null) {
+                    typedSharesValid = false;
+                    typedIn[i] = 0L;
+                }
+            }
+        }
+
+        updatingShares = true;
+        try {
+            if (total == null) {
+                // no amount yet, nothing to split
+                for (SplitRow row : included) {
+                    if (!row.typed) {
+                        row.shareField.setText("");
+                    }
+                }
+                remainingLabel.setText(" ");
+                return;
+            }
+            long[] shares = UserGraph.fillShares(total, typedIn);
+            long sum = 0;
+            for (int i = 0; i < included.size(); i++) {
+                SplitRow row = included.get(i);
+                if (!row.typed && !row.shareField.isFocusOwner()) {
+                    row.shareField.setText(plainAmount(shares[i]));
+                }
+                row.shareField.setForeground(row.typed ? Color.BLACK : MUTED); // worked out = grey
+                sum += shares[i];
+            }
+
+            long left = total - sum;
+            if (!typedSharesValid) {
+                remainingLabel.setText("Check the shares you typed.");
+            } else if (left > 0) {
+                remainingLabel.setText(UserGraph.formatCents(left) + " left to assign");
+            } else if (left < 0) {
+                remainingLabel.setText(UserGraph.formatCents(-left) + " over the amount");
+            } else {
+                remainingLabel.setText(" ");
+            }
+        } finally {
+            updatingShares = false;
+        }
+    }
+
+    /**
+     * Includes everyone again and goes back to an even split
+     */
+    private void clearSplit() {
+        for (SplitRow row : splitRows) {
+            row.included = true;
+            row.typed = false;
+        }
+        updateRows();
+    }
+
+    private List<SplitRow> includedRows() {
+        List<SplitRow> included = new ArrayList<>();
+        for (SplitRow row : splitRows) {
+            if (row.included) {
+                included.add(row);
+            }
+        }
+        return included;
     }
 
     /**
@@ -157,17 +361,12 @@ public class Expenses extends ParentTab {
             return;
         }
         int payer = paidByBox.getSelectedIndex();
-        List<Integer> splitWith = new ArrayList<>();
-        for (int i = 0; i < splitBoxes.size(); i++) {
-            if (splitBoxes.get(i).isSelected()) {
-                splitWith.add(i);
-            }
-        }
-        if (splitWith.isEmpty()) {
+        List<SplitRow> included = includedRows();
+        if (included.isEmpty()) {
             errorLabel.setText("Pick who to split it with.");
             return;
         }
-        if (splitWith.equals(List.of(payer))) {
+        if (included.size() == 1 && included.get(0).person == payer) {
             errorLabel.setText("Pick someone besides the person who paid.");
             return;
         }
@@ -179,7 +378,7 @@ public class Expenses extends ParentTab {
             errorLabel.setText(valueBox.getText().isBlank() ? "Enter an amount." : "Amount must be a number.");
             return;
         }
-        // Anything below half a cent would round to $0.00
+        // anything under half a cent rounds to $0.00
         if (amount.compareTo(new BigDecimal("0.005")) < 0) {
             errorLabel.setText("Amount must be greater than 0.");
             return;
@@ -188,19 +387,31 @@ public class Expenses extends ParentTab {
             errorLabel.setText("Amount is too large.");
             return;
         }
+        long totalCents = parseCents(valueBox.getText());
+
+        List<Integer> splitWith = new ArrayList<>();
+        long[] shares = new long[included.size()];
+        for (int i = 0; i < included.size(); i++) {
+            Long share = parseCents(included.get(i).shareField.getText());
+            if (share == null) {
+                errorLabel.setText("Each share must be a number of 0 or more.");
+                return;
+            }
+            splitWith.add(included.get(i).person);
+            shares[i] = share;
+        }
 
         String description = descBox.getText().trim();
         try {
-            transactionList.addAll(userGraph.addEvenSplit(payer, splitWith, amount.doubleValue(), description));
+            userGraph.addSplit(payer, splitWith, totalCents, shares, description);
         } catch (IllegalArgumentException e) {
             errorLabel.setText(e.getMessage());
             return;
         }
-        history.add(describeExpense(payer, splitWith, amount, description));
-
         errorLabel.setText(" ");
         valueBox.setText("");
         descBox.setText("");
+        clearSplit();
         valueBox.requestFocusInWindow();
         refreshResults();
     }
@@ -210,8 +421,8 @@ public class Expenses extends ParentTab {
      */
     private void refreshResults() {
         historyModel.clear();
-        for (String line : history) {
-            historyModel.addElement(line);
+        for (Expense expense : userGraph.getExpenses()) {
+            historyModel.addElement(describeExpense(expense));
         }
 
         balancesModel.clear();
@@ -230,33 +441,79 @@ public class Expenses extends ParentTab {
     }
 
     /**
-     * Describes an expense in words, e.g. "You paid $80.00 — dinner, split between you, Harold and
-     * Vin", or "Harold paid $20.00 for you — pizza" when it was for one other person.
-     *
-     * @return the sentence.
+     * Describes an expense in words, ie "You paid $80.00 — dinner, split between you, Vin and John",
+     * or with each share listed when the split isn't even
+     * @return the sentence for the history list
      */
-    private String describeExpense(int payer, List<Integer> splitWith, BigDecimal amount, String description) {
-        String money = UserGraph.formatMoney(amount.doubleValue());
-        String text = userGraph.displayName(payer) + " paid " + money;
-        String what = description.isEmpty() ? "" : " — " + description;
+    private String describeExpense(Expense expense) {
+        List<Integer> splitWith = expense.splitWith();
+        long[] shares = expense.shares();
+        long totalCents = expense.totalCents();
+        String text = userGraph.displayName(expense.payer()) + " paid " + UserGraph.formatCents(totalCents);
+        String what = expense.description().isEmpty() ? "" : " — " + expense.description();
 
         if (splitWith.size() == 1) {
             return text + " for " + lowercaseYou(splitWith.get(0)) + what;
         }
-        List<String> names = new ArrayList<>();
-        for (int person : splitWith) {
-            names.add(lowercaseYou(person));
+        boolean even = Arrays.equals(shares, UserGraph.splitEvenly(totalCents, shares.length));
+        List<String> parts = new ArrayList<>();
+        for (int i = 0; i < splitWith.size(); i++) {
+            String name = lowercaseYou(splitWith.get(i));
+            parts.add(even ? name : name + " " + UserGraph.formatCents(shares[i]));
         }
-        String last = names.remove(names.size() - 1);
-        return text + what + ", split between " + String.join(", ", names) + " and " + last;
+        String last = parts.remove(parts.size() - 1);
+        String people = String.join(", ", parts) + " and " + last;
+        return text + what + (even ? ", split between " + people : ": " + people);
     }
 
-    /** "you" for the user "Me", otherwise the person's name. */
+    /** "you" for the user "Me", otherwise the person's name */
     private String lowercaseYou(int person) {
         return person == 0 ? "you" : userGraph.displayName(person);
     }
 
-    public List<Transaction> getTransactions() {
-        return transactionList;
+    /**
+     * Reads an amount like "26.67", "$1,000" or "5" as cents
+     * @return the cents, or null if it's blank, not a number, negative or too large
+     */
+    private static Long parseCents(String text) {
+        String cleaned = text.trim().replace("$", "").replace(",", "");
+        if (cleaned.isEmpty()) {
+            return null;
+        }
+        try {
+            BigDecimal dollars = new BigDecimal(cleaned);
+            if (dollars.signum() < 0 || dollars.compareTo(MAX_AMOUNT) > 0) {
+                return null;
+            }
+            return dollars.movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact();
+        } catch (NumberFormatException | ArithmeticException e) {
+            return null;
+        }
+    }
+
+    /** Formats cents for a share box without the $, ie 2667 becomes "26.67" */
+    private static String plainAmount(long cents) {
+        return String.format("%d.%02d", cents / 100, cents % 100);
+    }
+
+    /** A listener that runs the action whenever a field's text changes */
+    private static DocumentListener onChange(Runnable action) {
+        return new DocumentListener() {
+            public void insertUpdate(DocumentEvent e) { action.run(); }
+            public void removeUpdate(DocumentEvent e) { action.run(); }
+            public void changedUpdate(DocumentEvent e) { action.run(); }
+        };
+    }
+
+    /** A button that looks like a blue text link, like Venmo's "Clear" */
+    private static JButton linkButton(String text) {
+        JButton button = new JButton(text);
+        button.setBorderPainted(false);
+        button.setContentAreaFilled(false);
+        button.setFocusPainted(false);
+        button.setMargin(new Insets(0, 0, 0, 0));
+        button.setForeground(ACCENT);
+        button.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        return button;
     }
 }

@@ -198,8 +198,9 @@ public class TabSplitTest {
     @Test
     public void evenSplitWithoutThePayer(){
         // Harold paid $10 for Isauro and Vin only
-        List<Transaction> recorded = userGraph.addEvenSplit(2, List.of(1, 3), 10, "snacks");
-        assertEquals(recorded.size(), 2);
+        userGraph.addEvenSplit(2, List.of(1, 3), 10, "snacks");
+        assertEquals(userGraph.getExpenses().size(), 1); // one expense, not one per person
+        assertEquals(userGraph.getExpenses().get(0).splitWith(), List.of(1, 3));
         assertEquals(userGraph.getNetAmt(2), 10);
         assertEquals(userGraph.getNetAmt(1), -5);
         assertEquals(userGraph.getNetAmt(3), -5);
@@ -222,6 +223,65 @@ public class TabSplitTest {
         assertThrows(IllegalArgumentException.class, () -> userGraph.addEvenSplit(0, List.of(1, 2), 0, ""));
         assertThrows(IllegalArgumentException.class, () -> userGraph.addEvenSplit(0, List.of(1, 99), 10, ""));
         assertEquals(userGraph.cashFlowMin(), "");
+    }
+
+    @Test
+    public void fillSharesSplitsWhatIsLeftEvenly(){
+        // $80, Harold's share typed in as $32: the other two split the remaining $48
+        assertArrayEquals(UserGraph.fillShares(8000, new Long[] {3200L, null, null}), new long[] {3200, 2400, 2400});
+        // Nothing typed in: the same as an even split
+        assertArrayEquals(UserGraph.fillShares(8000, new Long[] {null, null, null}), new long[] {2667, 2667, 2666});
+        // Everything typed in: kept exactly as typed, even if it doesn't add up
+        assertArrayEquals(UserGraph.fillShares(8000, new Long[] {5000L, 2000L}), new long[] {5000, 2000});
+        // Typed-in shares already over the total: everyone else gets $0
+        assertArrayEquals(UserGraph.fillShares(8000, new Long[] {9000L, null}), new long[] {9000, 0});
+        assertThrows(IllegalArgumentException.class, () -> UserGraph.fillShares(8000, new Long[] {-100L, null}));
+    }
+
+    @Test
+    public void addSplitWithUnevenShares(){
+        // I paid $80: Harold's share is $32, Isauro's and mine are $24 each
+        userGraph.addSplit(0, List.of(2, 1, 0), 8000, new long[] {3200, 2400, 2400}, "dinner");
+        assertEquals(userGraph.getNetAmt(0), 56);
+        assertEquals(userGraph.getNetAmt(2), -32);
+        assertEquals(userGraph.getNetAmt(1), -24);
+    }
+
+    @Test
+    public void addSplitRejectsSharesThatDontAddUp(){
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+            () -> userGraph.addSplit(0, List.of(1, 2), 8000, new long[] {5000, 2600}, "dinner"));
+        assertEquals(e.getMessage(), "The shares add up to $76.00, not $80.00.");
+        assertThrows(IllegalArgumentException.class,
+            () -> userGraph.addSplit(0, List.of(1, 2), 8000, new long[] {9000, -1000}, "dinner"));
+        assertEquals(userGraph.cashFlowMin(), "");
+        assertEquals(userGraph.getExpenses().size(), 0);
+    }
+
+    @Test
+    public void expensesAreKeptInOrder(){
+        userGraph.addSplit(0, List.of(0, 1, 2), 9000, new long[] {3000, 3000, 3000}, "dinner");
+        userGraph.updateEdge(new Transaction(2, 0, 15, "pizza"));
+        List<Expense> expenses = userGraph.getExpenses();
+        assertEquals(expenses.size(), 2);
+        assertEquals(expenses.get(0).payer(), 0);
+        assertEquals(expenses.get(0).totalCents(), 9000);
+        assertEquals(expenses.get(0).description(), "dinner");
+        assertEquals(expenses.get(1).splitWith(), List.of(0));
+        assertEquals(expenses.get(1).totalCents(), 1500);
+        // balances add up from the list: me +90 -30 -15, Harold -30 +15
+        assertEquals(userGraph.getNetAmt(0), 45);
+        assertEquals(userGraph.getNetAmt(2), -15);
+    }
+
+    @Test
+    public void recordedExpensesCantBeChangedFromOutside(){
+        long[] shares = {5000, 3000};
+        userGraph.addSplit(0, List.of(1, 2), 8000, shares, "dinner");
+        shares[0] = 999999; // changing the caller's array afterwards
+        userGraph.getExpenses().get(0).shares()[0] = 999999; // or the copy handed back
+        assertEquals(userGraph.getNetAmt(1), -50);
+        assertThrows(UnsupportedOperationException.class, () -> userGraph.getExpenses().clear());
     }
 
     @Test

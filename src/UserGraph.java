@@ -1,8 +1,8 @@
 import java.util.*;
 
 /**
- * A class representing a graph with an adjacency matrix implementation to track financial
- * transactions between users.
+ * The group: its people and every expense between them. Balances are worked out from the
+ * expense list, so removing or changing an expense later just means changing the list
  *
  * Money is stored as whole cents ({@code long}) so floating-point leftovers such as
  * 0.1 + 0.2 - 0.3 can never show up as a "$0.00" payment.
@@ -13,9 +13,7 @@ public class UserGraph {
 
     private int V;
 
-    // matrix[a][b] is how much person a owes person b, in cents. Values are never negative, and at
-    // most one of matrix[a][b] and matrix[b][a] is nonzero.
-    long[][] matrix = new long[LIMIT][LIMIT];
+    private List<Expense> expenses = new ArrayList<>(); // oldest first
 
     private List<String> userList = new ArrayList<String>();
 
@@ -28,7 +26,7 @@ public class UserGraph {
     public record Payment(int payer, int receiver, long cents) {}
 
     /**
-     * Constructs a new UserGraph with a fixed matrix size. Initializes the graph with a default user
+     * Constructs a new UserGraph. Initializes the graph with a default user
      * "Me".
      */
     public UserGraph() {
@@ -36,7 +34,7 @@ public class UserGraph {
     }
 
     /**
-     * Returns the maximum size limit of the adjacency matrix.
+     * Returns the most people the group can have.
      *
      * @return the size limit.
      */
@@ -125,23 +123,25 @@ public class UserGraph {
     }
 
     /**
-     * Updates the edge values (financial transaction) between two users.
-     *
+     * Records a transaction as an expense for one person, ie vCredit paid $20 for vDebit
      * @param transac the transaction object containing credit, debit, and value details.
      */
     public void updateEdge(Transaction transac) {
-        int credit = transac.vCredit;
-        int debit = transac.vDebit;
-        validateVertex(credit);
-        validateVertex(debit);
-        if (credit == debit) {
-            return; // paying for yourself doesn't change anyone's balance
+        validateVertex(transac.vCredit);
+        validateVertex(transac.vDebit);
+        if (transac.vCredit == transac.vDebit || transac.getCents() == 0) {
+            return; // paying for yourself or $0 doesn't change anyone's balance
         }
+        expenses.add(new Expense(transac.vCredit, List.of(transac.vDebit), new long[] {transac.getCents()},
+            transac.description));
+    }
 
-        // How much debit owes credit after this transaction. Negative means credit owes debit.
-        long owed = matrix[debit][credit] - matrix[credit][debit] + transac.getCents();
-        matrix[debit][credit] = Math.max(owed, 0);
-        matrix[credit][debit] = Math.max(-owed, 0);
+    /**
+     * Getter for every expense recorded, oldest first (read only)
+     * @return the expenses
+     */
+    public List<Expense> getExpenses() {
+        return Collections.unmodifiableList(expenses);
     }
 
     /**
@@ -166,56 +166,118 @@ public class UserGraph {
     }
 
     /**
-     * Records one expense split evenly: {@code payer} paid {@code amount}, and everyone in
-     * {@code splitWith} shares it equally. The payer can be in {@code splitWith}; their own share
-     * doesn't change any balance. Each other person becomes one transaction for their share.
-     *
-     * @param payer       the person who paid.
-     * @param splitWith   the people sharing the expense, in the order extra cents are given out.
-     * @param amount      the total amount, in dollars.
-     * @param description what the expense was for, e.g. "dinner".
-     * @return the transactions that were recorded, one per person other than the payer.
-     * @throws IllegalArgumentException if nobody is picked, someone is picked twice, or the amount
-     *                                  isn't greater than 0. Nothing is recorded in that case.
+     * Records one expense split evenly between everyone in splitWith (can include the payer)
+     * @param payer person who paid
+     * @param splitWith people sharing it, extra cents go to the first ones
+     * @param amount total in dollars
+     * @param description what it was for, ie "dinner"
+     * @throws IllegalArgumentException if the input is bad, nothing is recorded then
      */
-    public List<Transaction> addEvenSplit(int payer, List<Integer> splitWith, double amount, String description) {
+    public void addEvenSplit(int payer, List<Integer> splitWith, double amount, String description) {
+        long cents = Math.round(amount * 100);
+        if (splitWith.isEmpty()) {
+            throw new IllegalArgumentException("Pick at least one person to split with.");
+        }
+        addSplit(payer, splitWith, cents, splitEvenly(cents, splitWith.size()), description);
+    }
+
+    /**
+     * Works out everyone's share when some shares were typed in by hand. Whatever is left of the
+     * total after the typed-in shares is split evenly among everyone else.
+     * For example, $80 between three people with the first share typed in as $32 gives $32, $24, $24.
+     *
+     * If the typed-in shares already add up to more than the total, everyone else gets $0. The
+     * shares then add up to more than the total, which {@link #addSplit} will reject.
+     *
+     * @param totalCents the total amount, in cents.
+     * @param typedIn    one entry per person: the share typed in for them in cents, or
+     *                   {@code null} if their share should be worked out.
+     * @return everyone's share, in cents, in the same order.
+     * @throws IllegalArgumentException if a typed-in share is negative.
+     */
+    public static long[] fillShares(long totalCents, Long[] typedIn) {
+        long typedSum = 0;
+        int others = 0;
+        for (Long share : typedIn) {
+            if (share == null) {
+                others++;
+            } else if (share < 0) {
+                throw new IllegalArgumentException("A share can't be negative.");
+            } else {
+                typedSum += share;
+            }
+        }
+
+        // Split what's left evenly among the people without a typed-in share
+        long[] evenShares = others == 0 ? new long[0] : splitEvenly(Math.max(totalCents - typedSum, 0), others);
+        long[] shares = new long[typedIn.length];
+        int next = 0;
+        for (int i = 0; i < typedIn.length; i++) {
+            shares[i] = typedIn[i] != null ? typedIn[i] : evenShares[next++];
+        }
+        return shares;
+    }
+
+    /**
+     * Records one expense where splitWith.get(i) owes shares[i] of what the payer paid
+     * @param payer person who paid
+     * @param splitWith people sharing it (can include the payer)
+     * @param totalCents total in cents
+     * @param shares each person's share in cents, same order as splitWith
+     * @param description what it was for, ie "dinner"
+     * @throws IllegalArgumentException if someone's picked twice, a share is negative, or the shares
+     *                                  don't add up to the total, nothing is recorded then
+     */
+    public void addSplit(int payer, List<Integer> splitWith, long totalCents, long[] shares, String description) {
         // Check everything first, so a bad input can't leave the expense half-recorded
         validateVertex(payer);
+        if (splitWith.isEmpty()) {
+            throw new IllegalArgumentException("Pick at least one person to split with.");
+        }
         if (new HashSet<>(splitWith).size() != splitWith.size()) {
             throw new IllegalArgumentException("Each person can only be picked once.");
         }
         for (int person : splitWith) {
             validateVertex(person);
         }
-        long cents = Math.round(amount * 100);
-        if (cents <= 0) {
+        if (totalCents <= 0) {
             throw new IllegalArgumentException("Amount must be greater than 0.");
         }
-        long[] shares = splitEvenly(cents, splitWith.size());
-
-        List<Transaction> recorded = new ArrayList<>();
-        for (int i = 0; i < shares.length; i++) {
-            int person = splitWith.get(i);
-            if (person != payer && shares[i] > 0) {
-                Transaction transac = new Transaction(payer, person, shares[i] / 100.0, description);
-                updateEdge(transac);
-                recorded.add(transac);
-            }
+        if (shares.length != splitWith.size()) {
+            throw new IllegalArgumentException("Every person needs a share.");
         }
-        return recorded;
+        long sum = 0;
+        for (long share : shares) {
+            if (share < 0) {
+                throw new IllegalArgumentException("A share can't be negative.");
+            }
+            sum += share;
+        }
+        if (sum != totalCents) {
+            throw new IllegalArgumentException("The shares add up to " + formatCents(sum)
+                + ", not " + formatCents(totalCents) + ".");
+        }
+
+        expenses.add(new Expense(payer, splitWith, shares, description));
     }
 
     /**
-     * Calculates the net balance for a specific user in cents: what everyone else owes them minus
-     * what they owe everyone else.
-     *
+     * Adds up a person's balance from every expense: what they paid minus their shares
      * @param vNum the vertex number representing the user.
-     * @return the net balance of the user, in cents.
+     * @return the net balance in cents, positive means they're owed money
      */
     public long getNetCents(int vNum) {
         long net = 0;
-        for (int i = 0; i < V; i++) {
-            net += matrix[i][vNum] - matrix[vNum][i];
+        for (Expense expense : expenses) {
+            if (expense.payer() == vNum) {
+                net += expense.totalCents();
+            }
+            long[] shares = expense.shares();
+            for (int i = 0; i < shares.length; i++) {
+                if (expense.splitWith().get(i) == vNum) {
+                    net -= shares[i];
+                }
+            }
         }
         return net;
     }

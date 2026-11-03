@@ -29,6 +29,7 @@ public class Expenses extends ParentTab {
     private JTextField valueBox, descBox, dateBox;
     private JLabel errorLabel;
     private JButton addTransactionButton, cancelEditButton;
+    private JButton addFriendsLink; // shown instead of the form when there's nobody to split with
     private int editingIndex = -1; // which expense the form is editing, -1 when adding a new one
     private JPanel historyRows = rowPanel();
     private DefaultListModel<String> balancesModel = new DefaultListModel<>();
@@ -54,6 +55,7 @@ public class Expenses extends ParentTab {
             shareField.setHorizontalAlignment(JTextField.RIGHT);
             shareField.getDocument().addDocumentListener(onChange(() -> {
                 if (!updatingShares) {
+                    clearError();
                     // clearing a box makes it an even share again
                     typed = !shareField.getText().isBlank();
                     // swing won't let a box change while it's reporting a change, so wait a moment
@@ -72,6 +74,7 @@ public class Expenses extends ParentTab {
             toggleButton.setPreferredSize(toggleButton.getPreferredSize());
             toggleButton.setHorizontalAlignment(SwingConstants.RIGHT);
             toggleButton.addActionListener(e -> {
+                clearError();
                 included = !included;
                 typed = false;
                 updateRows();
@@ -92,24 +95,42 @@ public class Expenses extends ParentTab {
     }
 
     /**
+     * Sets what the "Add friends first" link does, ie open the Friends screen
+     * @param showFriends the code to run
+     */
+    public void setShowFriends(Runnable showFriends) {
+        addFriendsLink.addActionListener(e -> showFriends.run());
+    }
+
+    /**
      * Sets up the user interface components for the Expenses tab.
      */
     private void setupUI() {
         content.setLayout(new BorderLayout(0, 12));
 
         paidByBox = new JComboBox<>();
-        paidByBox.addActionListener(e -> updateRows()); // moves the "paid the bill" note
+        paidByBox.addActionListener(e -> {
+            clearError();
+            updateRows(); // moves the "paid the bill" note
+        });
         splitPanel = new JPanel(new GridBagLayout());
         splitPanel.setOpaque(false);
         remainingLabel = new JLabel(" ");
         remainingLabel.setForeground(ERROR);
         clearButton = linkButton("Clear");
         clearButton.setToolTipText("Split evenly between everyone again");
-        clearButton.addActionListener(e -> clearSplit());
+        clearButton.addActionListener(e -> {
+            clearError();
+            clearSplit();
+        });
         valueBox = new JTextField(8);
         valueBox.getDocument().addDocumentListener(onChange(this::recalculateShares));
         descBox = new JTextField(12);
         dateBox = new JTextField(UserGraph.formatDate(LocalDate.now()), 7);
+        // an error goes away as soon as you change what it was about
+        for (JTextField box : new JTextField[] {valueBox, descBox, dateBox}) {
+            box.getDocument().addDocumentListener(onChange(this::clearError));
+        }
         dateBox.setToolTipText("MM/DD/YY, or use the up and down arrows to change it by a day");
         // up and down arrows move the date by a day
         dateBox.getInputMap().put(KeyStroke.getKeyStroke("UP"), "nextDay");
@@ -126,6 +147,8 @@ public class Expenses extends ParentTab {
         cancelEditButton = linkButton("Cancel");
         cancelEditButton.addActionListener(e -> stopEditing());
         cancelEditButton.setVisible(false); // only while editing
+        addFriendsLink = linkButton("Add friends first");
+        addFriendsLink.setVisible(false); // only while it's just you
         errorLabel = errorLabel();
 
         // two columns of "Label: field"
@@ -147,6 +170,7 @@ public class Expenses extends ParentTab {
         buttons.setOpaque(false);
         buttons.add(addTransactionButton);
         buttons.add(cancelEditButton);
+        buttons.add(addFriendsLink);
         JPanel buttonRow = new JPanel(new BorderLayout(10, 0));
         buttonRow.setOpaque(false);
         buttonRow.add(buttons, BorderLayout.WEST);
@@ -157,7 +181,9 @@ public class Expenses extends ParentTab {
         // history on top, balances and repayments side by side below it
         JPanel results = new JPanel(new GridLayout(1, 2, 12, 0));
         results.setOpaque(false);
-        results.add(card("Balances", plainList(balancesModel, null)));
+        JScrollPane balances = plainList(balancesModel, null);
+        colorBalances((JList<?>) balances.getViewport().getView());
+        results.add(card("Balances", balances));
         results.add(card("Settle up", plainList(settleModel, null)));
 
         JPanel lists = new JPanel(new GridLayout(2, 1, 0, 12));
@@ -269,7 +295,10 @@ public class Expenses extends ParentTab {
         for (JComponent field : new JComponent[] {paidByBox, valueBox, descBox, dateBox, addTransactionButton}) {
             field.setEnabled(hasFriends);
         }
-        errorLabel.setText(hasFriends ? " " : "Add friends first.");
+        addFriendsLink.setVisible(!hasFriends);
+        errorLabel.setText(" ");
+        // enter anywhere in the form adds the expense, and the button shows it's the main one
+        getRootPane().setDefaultButton(addTransactionButton);
         updateRows();
         refreshResults();
     }
@@ -384,8 +413,7 @@ public class Expenses extends ParentTab {
      */
     private void handleAddTransaction() {
         if (userGraph.V() < 2) {
-            errorLabel.setText("Add friends first.");
-            return;
+            return; // the form is turned off then, the "Add friends first" link shows instead
         }
         int payer = paidByBox.getSelectedIndex();
         List<SplitRow> included = includedRows();
@@ -585,6 +613,28 @@ public class Expenses extends ParentTab {
     private static boolean isEvenSplit(Expense expense) {
         long[] shares = expense.shares();
         return Arrays.equals(shares, UserGraph.splitEvenly(expense.totalCents(), shares.length));
+    }
+
+    /**
+     * Shows each balance line green if they're owed money, red if they owe, black if settled
+     */
+    private void colorBalances(JList<?> list) {
+        list.setCellRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value, int index,
+                    boolean isSelected, boolean cellHasFocus) {
+                super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+                // line i is person i, same order as the group
+                long net = index < userGraph.V() ? userGraph.getNetCents(index) : 0;
+                setForeground(net > 0 ? ParentTab.OWED : net < 0 ? ParentTab.ERROR : Color.BLACK);
+                return this;
+            }
+        });
+    }
+
+    /** Hides the error message, called when the input changes */
+    private void clearError() {
+        errorLabel.setText(" ");
     }
 
     /** "Nov 3" for this year, "Nov 3, 2025" for other years */

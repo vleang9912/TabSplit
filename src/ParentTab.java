@@ -14,7 +14,8 @@ public abstract class ParentTab extends JPanel {
     static final Color CARD = Color.WHITE;
     static final Color CARD_BORDER = new Color(220, 220, 225);
     static final Color ACCENT = new Color(0, 122, 255);
-    static final Color ERROR = new Color(200, 30, 30);
+    static final Color ERROR = new Color(200, 30, 30); // also used for "owes"
+    static final Color OWED = new Color(30, 135, 60);
     static final Color MUTED = new Color(110, 110, 115);
 
     protected JButton backButton;
@@ -151,31 +152,69 @@ public abstract class ParentTab extends JPanel {
     }
 
     /**
-     * One line of a list with links on the right, ie "Vin Leang     Rename  Remove"
+     * One line of a list with links on the right, ie "Vin Leang     Rename  Remove", long text
+     * wraps onto more lines
      * @return the row
      */
     static JPanel actionRow(String text, JComponent... links) {
-        JPanel row = new JPanel(new BorderLayout(8, 0));
+        JPanel row = new JPanel(new BorderLayout(8, 0)) {
+            @Override
+            public Dimension getMaximumSize() {
+                // full width but only as tall as it needs, so rows stack at the top
+                return new Dimension(Integer.MAX_VALUE, getPreferredSize().height);
+            }
+        };
         row.setOpaque(false);
         row.setBorder(new EmptyBorder(3, 4, 3, 4));
-        JLabel label = new JLabel(text);
-        label.setToolTipText(text); // full text on hover when it's cut off with "..."
-        label.setMinimumSize(new Dimension(0, label.getPreferredSize().height));
-        row.add(label, BorderLayout.CENTER);
+        JTextArea area = wrappingText(text);
+        // nudge the text down so its first line lines up with the links
+        if (links.length > 0) {
+            int lineHeight = area.getFontMetrics(area.getFont()).getHeight();
+            area.setBorder(new EmptyBorder(Math.max(0, (links[0].getPreferredSize().height - lineHeight) / 2), 0, 0, 0));
+        }
+        // how tall wrapped text is depends on its width, so lay the list out again once the width is known
+        area.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                if (area.getPreferredSize().height != area.getHeight()) {
+                    row.revalidate();
+                }
+            }
+        });
+        row.add(area, BorderLayout.CENTER);
         JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 12, 0));
         right.setOpaque(false);
         for (JComponent link : links) {
             right.add(link);
         }
         row.add(right, BorderLayout.EAST);
-        // full width but only as tall as it needs, so rows stack at the top
-        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, row.getPreferredSize().height));
         return row;
     }
 
+    // read-only text that looks like a label but wraps at word breaks to fit its width
+    private static JTextArea wrappingText(String text) {
+        JTextArea area = new JTextArea();
+        // its hidden cursor would scroll the list to wherever the text ends, so it never moves
+        ((javax.swing.text.DefaultCaret) area.getCaret()).setUpdatePolicy(javax.swing.text.DefaultCaret.NEVER_UPDATE);
+        area.setText(text);
+        area.setLineWrap(true);
+        area.setWrapStyleWord(true);
+        area.setEditable(false);
+        area.setFocusable(false);
+        area.setOpaque(false);
+        area.setBorder(null);
+        area.setFont(UIManager.getFont("Label.font"));
+        area.setForeground(UIManager.getColor("Label.foreground"));
+        // start narrow so it takes the row's width instead of asking for one long line
+        area.setColumns(1);
+        // a first guess at the width, so it isn't one word per line before the real layout
+        area.setSize(300, Short.MAX_VALUE);
+        return area;
+    }
+
     /**
-     * A panel for actionRows that's always as wide as the card, so long rows get cut off with "..."
-     * instead of pushing their links out of view
+     * A panel for actionRows that's always as wide as the card, so long rows wrap instead of
+     * pushing their links out of view
      * @return the empty panel
      */
     static JPanel rowPanel() {

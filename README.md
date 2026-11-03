@@ -1,52 +1,88 @@
-<h3 align="center">TabSplit</h3>
+# TabSplit
 
+A desktop app for keeping a shared tab with friends (a trip, a house, a semester) and settling
+it with the **fewest possible payments**.
 
-> The original project started in 2024 with Isauro Reyes and Harold Ponce Saldivar. This version uses Java Swing as a graphics library and will include new updates to the UI, UX, and code for better usability and efficiency.
-> The original app focused on the app logic and backend. This 2026 update will focus on UX and the frontend experience.
-> **Note:** This README is out of date. The app was moved from the Macalester kilt-graphics library to Java Swing, so the screenshots, setup steps and field names below no longer match. To do: retake the screenshots, fix the broken image links, and update the instructions.
+TabSplit only records expenses; it never moves money. Add who paid and how it was split, and it
+keeps everyone's balance and tells you exactly who should pay whom.
 
-<!-- What is TabSplit? -->
-## What is TabSplit? Why use TabSplit?
-TabSplit is a program that simulates a cash-flow minimizer between a group of people, given a number of expenses among them; both of which are determined by the user. While it may be easy to calculate the lowest amount of payments among 3 people (assuming they each have debts to eachother), what about with 5 people? Or 7 people? Or even 10? A cash-flow minimzer, such as TabSplit, makes keeping calculating this amount super quick and efficiently.
+<img src="screenshots/expenses.png" width="560" alt="TabSplit Expenses screen: a half-filled dinner expense split five ways, the history of a weekend trip, colored balances, and three settle-up payments">
 
-<!-- How to use TabSplit -->
-## How do I use TabSplit?
-You need Java 17 or newer. From the project folder, run:
+## Features
+- **Split evenly or by exact amounts.** Type in anyone's share and the rest is split evenly
+  between everyone else, like Venmo. Leave people out of an expense with one click.
+- **Fewest payments to settle.** Finds the true minimum number of payments, not just a good
+  guess (see [how it works](#how-settle-up-works)).
+- **History with dates.** Edit or delete any expense; balances update on their own.
+- **Saves automatically** after every change, to `~/.tabsplit/group.json`.
+- **Exact money.** Amounts are stored as whole cents, so no floating-point rounding errors.
+- Add, rename and remove people (up to 10), with clear messages instead of crashes.
+
+## Run it
+You need Java 17 or newer.
 
 ```bash
 ./gradlew run
 ```
 
-Run the tests with `./gradlew test`.
+Run the tests:
 
-Once the program begins running, you should be met with this homescreen
+```bash
+./gradlew test
+```
 
-<img width="600" alt="TabSplit_Homescreen" src="https://github.com/user-attachments/assets/468d9b6a-b90e-4049-9077-75628c794b79" />
+## How settle-up works
+Everyone's balance is what they paid minus their shares. Settling up means making every balance
+zero with as few payments as possible.
 
-The buttons and their functions go as followed:
-* "Friends" a separate tab in which the user can add and view their friends.
-* "Expenses" a separate tab in which the user can add transactions between friends
-* "Quit App" closes the application
+The common approach is greedy: repeatedly have the person who owes the most pay the person
+who's owed the most. It always finishes in at most *n − 1* payments, but not always the fewest.
+The group in the screenshot shows why. Balances are **+$60, +$50, −$50, −$30, −$30**:
 
-## Friends
-When clicking on the "Friends" button you should be met with this screen. The "back" button will take you back to the homescreen.
+| Greedy (4 payments) | TabSplit (3 payments) |
+|---|---|
+| Ben pays you $50 | Ben pays Ana $50 |
+| Cara pays Ana $30 | Cara pays you $30 |
+| Dev pays Ana $20 | Dev pays you $30 |
+| Dev pays you $10 | |
 
-<img width="600" alt="TabSplit_Friends1" src="https://github.com/user-attachments/assets/ade8b8d5-7d7a-41df-869e-8a594292456c" />
+The key idea: a group of *k* people whose balances add up to zero can always settle among
+themselves in *k − 1* payments. So the fewest payments overall is
 
-The leftmost textfield is the name of the friend you wish to add. The "Add to group" button adds them to a user graph, which will be referenced across the entire program. The text in the middle will display the users currently in the group.
+> (people with a nonzero balance) − (the most zero-sum groups they can be split into)
 
-<img width="600" alt="TabSplit_Friends2" src="https://github.com/user-attachments/assets/4cd74a75-b2eb-48bb-829a-4231730d0ad4" />
+Here, {Ana, Ben} and {you, Cara, Dev} each add up to zero: 5 people − 2 groups = 3 payments.
 
-## Expenses
-When clicking on the "Expenses" button you should be met with this screen. The "back" button will take you back to the homescreen.
+Finding the most zero-sum groups is NP-hard in general, but a group is capped at 10 people, so
+TabSplit checks every subset with a bitmask dynamic program: for each subset of people, the most
+zero-sum groups it can be split into. That's 2¹⁰ subsets × 10 people, about 10,000 steps.
+It then settles each group with the greedy match, which takes *k − 1* payments for a group of
+*k*, the fewest possible for a group that can't be split any further.
+See `UserGraph.settleUp()`.
 
-<img width="601" alt="TabSplit_Expenses1" src="https://github.com/user-attachments/assets/7ff0fe18-12e1-4c6a-a959-d6d990ba8fa0" />
+## Design decisions
+- **Money in whole cents (`long`), never `double`.** With floating point, 0.1 + 0.2 − 0.3 isn't
+  0, and those leftovers used to show up as "$0.00" payments.
+- **A list of expenses is the single source of truth.** The first version kept a who-owes-whom
+  matrix of running totals, which can't edit or delete one expense. Now every expense is stored
+  and balances are worked out from the list. Recomputing is trivial at 10 people.
+- **The save file has its own format,** separate from the code's classes, with a version number.
+  Saves write a temp file and swap it in, so a crash can't leave half a file; a damaged file is
+  kept as `group.json.bad` rather than overwritten.
+- **Recording only.** The value is adding up a long-running tab and settling it all at once,
+  not tracking payments person by person.
 
-The "Person paying" textfield refers to the name of the friend who is the own who paid initially on behalf of another person, meaning that they will be owed money. The "Person owing" textfield refers to the name of the friend who was paid on behald by another person, meaning that they will be owing the other person money. The "Value" textfield refers to the amount that is being owed (must be numbers inputted in this textfield, letters will not work). The "Add Transaction" button will calculate the lowest amount of transaction performed using the cash flow minimizer algorith; the results will be displayed below.
+## Project layout
+| File | What it does |
+|---|---|
+| `src/UserGraph.java` | The group: people, expenses, balances, splitting and settle-up |
+| `src/Expense.java` | One expense: who paid, who shares it, each share, description, date |
+| `src/GroupStore.java` | Saves the group to JSON and loads it back |
+| `src/Expenses.java`, `src/FriendsTab.java` | The two screens (Swing) |
+| `test/TabSplitTest.java` | 39 JUnit tests: splitting, settle-up, editing, dates, saving |
 
-<img width="600" alt="TabSplit_Expenses2" src="https://github.com/user-attachments/assets/689bc6df-73a9-4a45-bcb3-7248fe7feaad" />
-
-<!-- Bugs -->
-## Bugs
-* The "Description" textfield on the "Expenses" tab may not properly display
-
+## History
+TabSplit started in 2024 as a data structures project at Macalester College by Vin Leang,
+Isauro Reyes and Harold Ponce Saldivar, focused on the settle-up logic. In 2026 Vin rebuilt it
+as a full app: moved it to Java Swing, made the settle-up exact, and added splits, editing,
+dates, saving to memory, and general UI upgrades.

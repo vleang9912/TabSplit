@@ -27,6 +27,7 @@ public class Menu extends JPanel {
         this.frame = frame;
         friends = new FriendsTab(this::returnToMenu, userGraph);
         expenses = new Expenses(this::returnToMenu, userGraph);
+        ((Expenses) expenses).setShowFriends(() -> switchToTab(friends));
 
         initializeListeners();
 
@@ -88,6 +89,7 @@ public class Menu extends JPanel {
      */
     private void switchToTab(JPanel tab) {
         frame.setContentPane(tab); // Replace whatever is showing with the new tab
+        frame.getRootPane().setDefaultButton(null); // each tab sets its own in onShow
         if (tab instanceof ParentTab parentTab) {
             parentTab.onShow();
         }

@@ -27,6 +27,12 @@ public class FriendsTab extends ParentTab {
         // Input row: "Name: [field] [Add to group]", with errors underneath
         newUserField = new JTextField(16);
         newUserField.addActionListener(e -> handleAddUser()); // Enter adds the name
+        // an error goes away as soon as you change the name
+        newUserField.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+            public void insertUpdate(javax.swing.event.DocumentEvent e) { errorLabel.setText(" "); }
+            public void removeUpdate(javax.swing.event.DocumentEvent e) { errorLabel.setText(" "); }
+            public void changedUpdate(javax.swing.event.DocumentEvent e) { errorLabel.setText(" "); }
+        });
         addUserButton = new JButton("Add to group");
         addUserButton.addActionListener(e -> handleAddUser());
         errorLabel = errorLabel();
@@ -58,6 +64,7 @@ public class FriendsTab extends ParentTab {
     @Override
     public void onShow() {
         errorLabel.setText(" ");
+        getRootPane().setDefaultButton(addUserButton);
         newUserField.requestFocusInWindow();
     }
 

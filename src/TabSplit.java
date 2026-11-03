@@ -20,6 +20,10 @@ public class TabSplit {
     public TabSplit() {
         // Create the window and show the menu
         userGraph = new UserGraph();
+        // Sample friends so the app can be tried right away. Added here, not in UserGraph,
+        // so the tests still start with a group of just "Me".
+        userGraph.addUser("Vin Leang");
+        userGraph.addUser("John Doe");
         frame = new JFrame("TabSplit");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setSize(CANVAS_WIDTH, CANVAS_HEIGHT);

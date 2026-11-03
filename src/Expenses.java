@@ -123,13 +123,13 @@ public class Expenses extends ParentTab {
         int paidBy = paidByBox.getSelectedIndex();
         paidByBox.removeAllItems();
         for (int i = 0; i < userGraph.V(); i++) {
-            paidByBox.addItem(i == 0 ? "Me" : userGraph.IntegerStringMap.get(i));
+            paidByBox.addItem(userGraph.IntegerStringMap.get(i));
         }
         paidByBox.setSelectedIndex(paidBy >= 0 ? paidBy : 0);
 
         // People are only ever added, never removed, so existing checkboxes stay in the right order
         for (int i = splitBoxes.size(); i < userGraph.V(); i++) {
-            JCheckBox box = new JCheckBox(i == 0 ? "Me" : userGraph.IntegerStringMap.get(i), true);
+            JCheckBox box = new JCheckBox(userGraph.IntegerStringMap.get(i), true);
             box.setOpaque(false);
             splitBoxes.add(box);
             splitPanel.add(box);

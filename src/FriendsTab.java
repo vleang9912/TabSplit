@@ -82,12 +82,13 @@ public class FriendsTab extends ParentTab {
     }
 
     /**
-     * Shows the current group in the list, with "Me" shown as "Me (you)".
+     * Shows the current group in the list, with "(you)" after your own name.
      */
     private void refreshGroup() {
         groupModel.clear();
         for (int i = 0; i < userGraph.V(); i++) {
-            groupModel.addElement(i == 0 ? "Me (you)" : userGraph.IntegerStringMap.get(i));
+            String name = userGraph.IntegerStringMap.get(i);
+            groupModel.addElement(i == 0 ? name + " (you)" : name);
         }
         int size = userGraph.V();
         countLabel.setText(size + " of " + userGraph.getLimit() + " people"

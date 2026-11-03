@@ -32,9 +32,7 @@ public class UserGraph {
      * "Me".
      */
     public UserGraph() {
-        addUser("You");
-        addUser("Vin Leang");
-        addUser("John Doe");
+        addUser("Me");
     }
 
     /**
